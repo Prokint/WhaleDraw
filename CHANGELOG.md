@@ -2,6 +2,7 @@
 
 ## Unreleased
 
++ [调整] 移除顶部栏中指向原项目的 GitHub 图标入口。
 + [新增] 提供 DeepSeek Harness 无限画布插件封装，支持在 DSH 侧栏打开完整创作界面，并适配子路径部署。
 + [修复] 修复 DSH 插件构建时遗漏 Tailwind 布局样式导致页面错乱的问题。
 + [新增] DSH 插件接入画布 MCP 工具，使 DSH Agent 可通过本地 Canvas Agent 读取和操作当前画布。
