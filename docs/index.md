@@ -15,6 +15,9 @@
 
 ## Development and Data
 
+- [DeepSeek Harness 插件构建与安装](../plugins/dsh-infinite-canvas/README.md)
+
+
 - [Local Development](/docs/development/local-development)
 - [Canvas Data Structure](/docs/development/canvas-data-structure)
 - [How the Local Codex Connection Works](/docs/development/local-codex-canvas)

@@ -1,0 +1,40 @@
+{
+  "name": "dsh-infinite-canvas",
+  "version": "0.1.0",
+  "description": "在 DeepSeek Harness 中使用 Infinite Canvas 无限画布创作工作台",
+  "type": "module",
+  "license": "MIT",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./agent": "./src/agent.mjs",
+    "./client": "./src/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "dist/app",
+    "cordis.yml",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "@basketikun/canvas-agent": "0.6.0",
+    "sirv": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

@@ -14,20 +14,24 @@ const localChangelog = readFileSync(resolve(webDir, "../CHANGELOG.md"), "utf8");
 // The frontend can discover and list them when enabled; development reads the directory live, while builds emit a static registry.
 function localPluginsManifest(): Plugin {
     const pluginsDir = resolve(webDir, "public/plugins");
+    let base = "/";
     const listLocalPlugins = () => {
         try {
             return readdirSync(pluginsDir)
                 .filter((file) => file.endsWith(".js"))
                 .sort()
-                .map((file) => `/plugins/${file}`);
+                .map((file) => `${base}plugins/${file}`);
         } catch {
             return [];
         }
     };
     return {
         name: "local-plugins-manifest",
+        configResolved(config) {
+            base = config.base;
+        },
         configureServer(server) {
-            server.middlewares.use("/plugins/index.json", (_req, res) => {
+            server.middlewares.use(`${base}plugins/index.json`, (_req, res) => {
                 res.setHeader("Content-Type", "application/json");
                 res.end(JSON.stringify(listLocalPlugins()));
             });

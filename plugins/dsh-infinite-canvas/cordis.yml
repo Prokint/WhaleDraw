@@ -1,0 +1,12 @@
+- insert:
+    - id: dsh-infinite-canvas
+      name: dsh-infinite-canvas
+    - id: dsh-infinite-canvas-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: infinite-canvas
+        transport: stdio
+        command: node
+        args:
+          - !!js process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-infinite-canvas/agent')
+          - mcp

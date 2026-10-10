@@ -117,7 +117,7 @@ export async function ensurePluginsLoaded() {
 async function loadLocalPlugins() {
     let urls: unknown;
     try {
-        const response = await fetch("/plugins/index.json");
+        const response = await fetch(`${import.meta.env.BASE_URL}plugins/index.json`);
         if (!response.ok) return;
         urls = await response.json();
     } catch {
