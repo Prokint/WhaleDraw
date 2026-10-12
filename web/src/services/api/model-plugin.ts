@@ -236,7 +236,7 @@ export function getPluginTemplates(): Record<ModelCapability, PluginTemplate[]> 
  * @param {string[]} images - reference images as data URLs; empty for text-to-image
  * @param {object} params
  * @param {string} params.size - output size, e.g. "1024x1024" or "auto"
- * @param {string} params.quality - "low" | "medium" | "high"
+ * @param {string} params.quality - "low" | "medium" | "high" | "xhigh" | "max"
  * @param {number} params.count - number of images
  * @param {string} [params.background] - "transparent" when requested
  * @param {string} model
@@ -325,12 +325,13 @@ return await generateImage({
             label: i18n.t("modelPlugin.templates.gemini"),
             script: `/**
  * Gemini image generation via models/{model}:generateContent.
- * Reference images go into parts.inline_data. size maps to aspectRatio; quality maps to imageSize.
+ * Reference images go into parts.inline_data. size maps to aspectRatio, resolution maps to imageSize; Gemini has no quality parameter.
  * @param {string} prompt
  * @param {string[]} images - reference images as data URLs
  * @param {object} params
- * @param {string} params.size - "1024x1024", "16:9", "auto", etc.; sent as aspectRatio
- * @param {string} params.quality - "low" | "medium" | "high"; sent as imageSize 1K/2K/4K
+ * @param {string} params.size - "2048x2048", "16:9", "auto", etc.; sent as aspectRatio
+ * @param {string} params.resolution - "1k" | "2k" | "4k" | "auto"; sent as imageSize
+ * @param {string} params.quality - "low" | "medium" | "high" | "xhigh" | "max"; unused here
  * @param {number} params.count - number of generateContent calls
  * @param {string} model
  * @param {string} baseUrl
@@ -338,12 +339,16 @@ return await generateImage({
  * @param {function} request
  * @returns {Promise<string[]>} image data URLs
  */
+function gcd(a, b) {
+  return b ? gcd(b, a % b) : a;
+}
+
 async function generateImage({
   prompt,
   images,
   params: {
     size,
-    quality,
+    resolution,
     count,
   },
   model,
@@ -364,26 +369,19 @@ async function generateImage({
     }
   }
 
-  const aspectRatioMap = {
-    "1024x1024": "1:1",
-    "1280x720": "16:9",
-    "720x1280": "9:16",
-    "1536x1024": "3:2",
-    "1024x1536": "2:3",
-  };
-  const imageSizeMap = {
-    low: "1K",
-    medium: "2K",
-    high: "4K",
-  };
   let aspectRatio = "1:1";
   if (size && size !== "auto") {
-    aspectRatio = aspectRatioMap[size] || size;
+    const pixels = size.match(/^(\\d+)x(\\d+)$/);
+    if (pixels) {
+      const width = Number(pixels[1]);
+      const height = Number(pixels[2]);
+      const divisor = gcd(width, height);
+      aspectRatio = \`\${width / divisor}:\${height / divisor}\`;
+    } else if (size.includes(":")) {
+      aspectRatio = size;
+    }
   }
-  let imageSize = "1K";
-  if (imageSizeMap[quality]) {
-    imageSize = imageSizeMap[quality];
-  }
+  const imageSize = resolution && resolution !== "auto" ? resolution.toUpperCase() : undefined;
   const n = Number(count) || 1;
   const urls = [];
 
