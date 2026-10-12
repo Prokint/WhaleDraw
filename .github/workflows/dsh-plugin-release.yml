@@ -33,7 +33,7 @@ jobs:
           node --input-type=module -e 'import {readFileSync} from "node:fs"; if (readFileSync("VERSION", "utf8").trim() !== process.env.RELEASE_TAG) throw new Error("VERSION 与发布标签不一致");'
       - name: Install web dependencies
         working-directory: web
-        run: npm ci
+        run: npm ci --legacy-peer-deps
       - name: Install plugin dependencies
         working-directory: plugins/dsh-infinite-canvas
         run: pnpm install --frozen-lockfile --no-optional --ignore-scripts

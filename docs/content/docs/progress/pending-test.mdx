@@ -5,6 +5,7 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- DSH 发布依赖安装：首次 v0.1.2 工作流在 `npm ci` 阶段因 Pro Components 声明 Ant Design 5、项目使用 Ant Design 6 而失败；打包流程改用 `npm ci --legacy-peer-deps`，继续使用已提交的锁文件，不调整业务依赖版本。需确认修复分支可为已发布标签补发安装包，后续 Release 自动打包仍需验收。
 - v0.1.2 发版：已将 DSH 立即更新记录归入正式版本并同步应用与插件包元数据。发布后需确认 Release 附件包含 `dsh-infinite-canvas-0.1.2.tgz`，旧版前端显示可更新，安装并手动重启 DSH 后显示 `v0.1.2`。本次发版未执行本地构建或测试，实际更新链路待验收。
 - 仓库主分支保护：GitHub 已启用两套规则，要求所有改动通过 PR，仅 `Prokint` 可合并 main，禁止强推和删除；`monagisa` 与 `openclaw-xian` 保留写权限。发版时先准备分支和 PR，经用户同意合并后再打标签。外部 Fork PR 的 Actions 运行要求维护者批准。规则配置已回读确认，未尝试实际违规推送、删除或协作者账号合并。
 - DSH 更新后生效：用户选择安装后提示手动重启。安装成功后按钮应显示「已安装，待重启」并禁用，明确提示重启 DSH；关闭再打开版本弹窗仍应识别已安装状态。用户手动重启后应加载新插件和前端资源，版本号与安装包一致。安装操作只在用户点击并确认后发生。
