@@ -5,6 +5,7 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- DSH 发布依赖安装：首次 v0.1.2 工作流因 Pro Components 声明 Ant Design 5、项目使用 Ant Design 6 而失败；处理 peer 声明后，严格安装又发现锁文件遗漏 i18next 等依赖，构建时还缺少 Linux 版 Rollup 原生模块。打包流程在 CI 临时目录删除不完整的前端锁文件，再用 `npm install --legacy-peer-deps` 按包清单生成完整依赖，不修改已发布标签或用户本地文件。修复分支的 [补发工作流](https://github.com/Prokint/infinite-canvas-dsh/actions/runs/38208524794) 已成功构建、打包并上传 `dsh-infinite-canvas-0.1.2.tgz`，读取附件确认包版本为 `0.1.2`、前端构建标识为 `v0.1.2`。依赖解析结果可能随后续补发变化；后续 Release 自动打包及实际 DSH 安装、重启和运行时组件兼容性仍需验收。
 - v0.1.2 发版：已将 DSH 立即更新记录归入正式版本并同步应用与插件包元数据。发布后需确认 Release 附件包含 `dsh-infinite-canvas-0.1.2.tgz`，旧版前端显示可更新，安装并手动重启 DSH 后显示 `v0.1.2`。本次发版未执行本地构建或测试，实际更新链路待验收。
 - 仓库主分支保护：GitHub 已启用两套规则，要求所有改动通过 PR，仅 `Prokint` 可合并 main，禁止强推和删除；`monagisa` 与 `openclaw-xian` 保留写权限。发版时先准备分支和 PR，经用户同意合并后再打标签。外部 Fork PR 的 Actions 运行要求维护者批准。规则配置已回读确认，未尝试实际违规推送、删除或协作者账号合并。
 - DSH 更新后生效：用户选择安装后提示手动重启。安装成功后按钮应显示「已安装，待重启」并禁用，明确提示重启 DSH；关闭再打开版本弹窗仍应识别已安装状态。用户手动重启后应加载新插件和前端资源，版本号与安装包一致。安装操作只在用户点击并确认后发生。
