@@ -1,10 +1,12 @@
-import type { CSSProperties } from "react";
-import { Modal, Tag, Timeline } from "antd";
+import { useEffect, useState, type CSSProperties } from "react";
+import { App, Button, Modal, Tag, Timeline } from "antd";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useVersionCheck } from "@/hooks/use-version-check";
-import { APP_VERSION } from "@/constant/env";
+import { APP_VERSION, IS_DSH_PLUGIN } from "@/constant/env";
 import { RELEASE_REPOSITORY } from "@/services/api/releases";
+import { fetchPluginUpdateInfo, installPluginUpdate, type PluginUpdateInfo } from "@/services/api/dsh-updates";
+import { flushCanvasStorage } from "@/stores/canvas/use-canvas-store";
 
 function getTagColor(type: string) {
     if (type === "新增" || type === "Added") return "green";
@@ -27,6 +29,42 @@ type VersionReleaseModalProps = {
 export function VersionReleaseModal({ className, style }: VersionReleaseModalProps) {
     const { t } = useTranslation();
     const { open, setOpen, openReleaseModal, latestVersion, releases, checking, hasNewVersion, checkLatestRelease, error } = useVersionCheck();
+    const { message, modal } = App.useApp();
+    const [updateInfo, setUpdateInfo] = useState<PluginUpdateInfo | null>(null);
+    const [updateError, setUpdateError] = useState("");
+    const [updating, setUpdating] = useState(false);
+    useEffect(() => {
+        if (!open || checking || !IS_DSH_PLUGIN || error) return;
+        const controller = new AbortController();
+        setUpdateInfo(null);
+        setUpdateError("");
+        void fetchPluginUpdateInfo(latestVersion, controller.signal).then(setUpdateInfo).catch((reason) => {
+            if (!controller.signal.aborted) setUpdateError(reason instanceof Error ? reason.message : t("version.installFailed"));
+        });
+        return () => controller.abort();
+    }, [open, checking, latestVersion, error, t]);
+    const update = () => {
+        if (!updateInfo?.available || updating) return;
+        modal.confirm({
+            title: t("version.installConfirm", { version: `v${updateInfo.version}` }),
+            content: t("version.installDescription"),
+            okText: t("version.installNow"), cancelText: t("common.cancel"),
+            async onOk() {
+                setUpdating(true);
+                setUpdateError("");
+                try {
+                    await flushCanvasStorage();
+                    await installPluginUpdate(updateInfo);
+                    setUpdateInfo({ ...updateInfo, available: false, installed: true });
+                    message.success(t("version.installedRestart"));
+                } catch (reason) {
+                    setUpdateError(reason instanceof Error ? reason.message : t("version.installFailed"));
+                } finally {
+                    setUpdating(false);
+                }
+            },
+        });
+    };
 
     return (
         <>
@@ -42,7 +80,7 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                     {hasNewVersion ? <span className="absolute -right-1.5 -top-1 size-1.5 rounded-full bg-green-500" /> : null}
                 </span>
             </button>
-            <Modal title={t("version.title")} open={open} width={680} centered footer={null} onCancel={() => setOpen(false)}>
+            <Modal title={t("version.title")} open={open} width={680} centered footer={null} closable={!updating} maskClosable={!updating} keyboard={!updating} onCancel={() => { if (!updating) setOpen(false); }}>
                 <div className="mb-5 grid grid-cols-2 gap-3">
                     <div className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
                         <div className="text-xs text-stone-500 dark:text-stone-400">{t("version.currentVersion")}</div>
@@ -54,6 +92,7 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                             <button
                                 type="button"
                                 className="cursor-pointer bg-transparent p-0 text-[11px] font-normal text-stone-400 underline-offset-2 transition hover:text-stone-700 hover:underline dark:text-stone-500 dark:hover:text-stone-300"
+                                disabled={updating || checking}
                                 onClick={() => void checkLatestRelease(true)}
                             >
                                 {t(checking ? "version.checking" : "version.checkUpdates")}
@@ -66,6 +105,14 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                     {t("version.source")}: <a href={`https://github.com/${RELEASE_REPOSITORY}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">{RELEASE_REPOSITORY}</a>
                 </p>
                 {error ? <p role="status" className="mb-4 text-xs text-stone-500 dark:text-stone-400">{error} {t("version.localFallback")}</p> : null}
+                <div className="mb-5 flex items-center gap-3">
+                    <Button type="primary" loading={updating} disabled={!IS_DSH_PLUGIN || checking || Boolean(error) || !hasNewVersion || !updateInfo?.available || updateInfo.installing} onClick={update}>
+                        {t(updating ? "version.installing" : updateInfo?.installed ? "version.installedPendingRestart" : "version.installNow")}
+                    </Button>
+                    <p role="status" className="text-xs text-stone-500 dark:text-stone-400">
+                        {updateError || (!IS_DSH_PLUGIN ? t("version.pluginOnly") : updateInfo?.installed ? t("version.installedRestart") : updateInfo?.reason || (updating ? t("version.installing") : ""))}
+                    </p>
+                </div>
                 <div className="max-h-[56vh] overflow-y-auto pr-2">
                     <Timeline
                         items={releases.map((release) => ({

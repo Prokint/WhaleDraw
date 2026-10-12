@@ -1,0 +1,50 @@
+name: Publish DSH Plugin
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已发布 Release 的版本标签
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - name: Check release version
+        run: |
+          node --input-type=module -e 'import {readFileSync} from "node:fs"; if (readFileSync("VERSION", "utf8").trim() !== process.env.RELEASE_TAG) throw new Error("VERSION 与发布标签不一致");'
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Install plugin dependencies
+        working-directory: plugins/dsh-infinite-canvas
+        run: pnpm install --frozen-lockfile --no-optional --ignore-scripts
+      - name: Build and pack plugin
+        working-directory: plugins/dsh-infinite-canvas
+        run: |
+          node scripts/build.mjs
+          pnpm --config.ignore-scripts=true pack --pack-destination dist
+      - name: Upload release package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          gh release upload "$RELEASE_TAG" "plugins/dsh-infinite-canvas/dist/dsh-infinite-canvas-$version.tgz"
