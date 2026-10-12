@@ -107,7 +107,7 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                 {error ? <p role="status" className="mb-4 text-xs text-stone-500 dark:text-stone-400">{error} {t("version.localFallback")}</p> : null}
                 <div className="mb-5 flex items-center gap-3">
                     <Button type="primary" loading={updating} disabled={!IS_DSH_PLUGIN || checking || Boolean(error) || !hasNewVersion || !updateInfo?.available || updateInfo.installing} onClick={update}>
-                        {t(updating ? "version.installing" : "version.installNow")}
+                        {t(updating ? "version.installing" : updateInfo?.installed ? "version.installedPendingRestart" : "version.installNow")}
                     </Button>
                     <p role="status" className="text-xs text-stone-500 dark:text-stone-400">
                         {updateError || (!IS_DSH_PLUGIN ? t("version.pluginOnly") : updateInfo?.installed ? t("version.installedRestart") : updateInfo?.reason || (updating ? t("version.installing") : ""))}

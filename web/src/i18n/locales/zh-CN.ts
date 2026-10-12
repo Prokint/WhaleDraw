@@ -382,6 +382,7 @@ export default {
         installConfirm: "更新到 {{version}}",
         installDescription: "将下载本仓库发布的安装包并交由 DSH 安装。安装完成后需要重启 DSH 才能加载新版本；开发目录安装会切换为版本安装包。",
         installedRestart: "安装完成，请重启 DSH 以加载新版本。",
+        installedPendingRestart: "已安装，待重启",
         installFailed: "安装更新失败，请重试。",
         pluginOnly: "请在 DSH 插件内下载安装更新。",
         types: { added: "新增", fixed: "修复", changed: "调整", optimized: "优化", docs: "文档" },

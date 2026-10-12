@@ -382,6 +382,7 @@ export default {
         installConfirm: "Update to {{version}}",
         installDescription: "DSH will download and install this repository's release package. Restart DSH afterwards to load the new version. A development directory installation will switch to the release package.",
         installedRestart: "Installed. Restart DSH to load the new version.",
+        installedPendingRestart: "Installed, restart pending",
         installFailed: "Installation failed. Please retry.",
         pluginOnly: "Install updates from inside the DSH plugin.",
         types: { added: "Added", fixed: "Fixed", changed: "Changed", optimized: "Optimized", docs: "Docs" },
