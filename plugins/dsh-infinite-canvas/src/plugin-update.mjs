@@ -9,6 +9,14 @@ import { appPath } from "./canvas-launcher.mjs";
 
 const repository = "Prokint/infinite-canvas-dsh";
 const packageName = "dsh-infinite-canvas";
+const sourceProtection = "当前为源码 link 开发安装，已禁用自动更新以保护源码。请更新源码、重新构建并重启 DSH。";
+
+async function isSourceInstall(manager) {
+    try {
+        const manifest = JSON.parse(await readFile(join(manager.profile.dir, "package.json"), "utf8"));
+        return ["dependencies", "devDependencies", "optionalDependencies"].some((group) => manifest[group]?.[packageName]?.startsWith("link:"));
+    } catch { throw new Error("无法确认当前插件的安装方式，已停止更新以保护源码。请检查 DSH 插件安装配置。"); }
+}
 
 export function installPluginUpdater(ctx) {
     const token = randomUUID();
@@ -56,14 +64,16 @@ export function installPluginUpdater(ctx) {
             if (!manager) { respond(res, 503, { error: "DSH 插件管理器不可用，无法安装更新。" }); return; }
             const version = new URL(req.url, "http://localhost").searchParams.get("version");
             if (action === "info") {
-                void candidate(version).then((info) => respond(res, 200, {
-                    ...info, token, installing, installed: installedVersion === info.version,
-                })).catch((error) => respond(res, 502, { error: error.message }));
+                void candidate(version).then(async (info) => {
+                    if (await isSourceInstall(manager)) { info.available = false; info.reason = sourceProtection; }
+                    respond(res, 200, { ...info, token, installing, installed: installedVersion === info.version });
+                }).catch((error) => respond(res, 502, { error: error.message }));
                 return;
             }
             if (installing) { respond(res, 409, { error: "已有更新正在安装，请等待完成。" }); return; }
             installing = true;
             void (async () => {
+                if (await isSourceInstall(manager)) throw new Error(sourceProtection);
                 const info = await candidate(version);
                 if (!info.available) throw new Error(info.reason);
                 if (!/^sha256:[a-f0-9]{64}$/.test(info.digest || "")) throw new Error("Release 安装包缺少有效的 SHA-256，请联系发布者重新发布。");
@@ -82,6 +92,8 @@ export function installPluginUpdater(ctx) {
                     for await (const chunk of createReadStream(file)) hash.update(chunk);
                     if (`sha256:${hash.digest("hex")}` !== info.digest) throw new Error("安装包 SHA-256 校验失败，请重新下载；尚未执行安装。");
                     abort.signal.throwIfAborted();
+                    // pnpm hoisted 在 Windows 上替换 link: 会清空源码；下载期间安装方式也可能变化。
+                    if (await isSourceInstall(manager)) throw new Error(sourceProtection);
                     // DSH 将本地包路径写入 profile，安装开始后保留该文件供后续依赖重装使用。
                     installStarted = true;
                     const result = await manager.installBundle(file, { enabled: true });
