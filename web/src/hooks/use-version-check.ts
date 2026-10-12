@@ -41,10 +41,12 @@ export function useVersionCheck() {
             setError("");
             return true;
         } catch (reason) {
+            setLatestVersion(currentVersion);
+            setReleases(localReleases);
             setError(reason instanceof Error ? reason.message : t("version.updateFailed"));
             return false;
         }
-    }, [t]);
+    }, [currentVersion, localReleases, t]);
 
     const checkLatestRelease = useCallback(
         async (showMessage = false) => {
