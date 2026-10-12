@@ -1,5 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { gt, valid } from "semver";
 import { appPath } from "./canvas-launcher.mjs";
 
@@ -8,6 +12,8 @@ const packageName = "dsh-infinite-canvas";
 
 export function installPluginUpdater(ctx) {
     const token = randomUUID();
+    const abort = new AbortController();
+    ctx.effect(() => () => abort.abort());
     let installing = false;
     let installedVersion;
     const candidate = async (requestedVersion) => {
@@ -21,7 +27,7 @@ export function installPluginUpdater(ctx) {
         if (!gt(version, currentVersion)) return { version, available: false, reason: "当前插件已安装此版本或更高版本。" };
         const tag = `v${version}`;
         const response = await fetch(`https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(tag)}`, {
-            headers: { Accept: "application/vnd.github+json" }, cache: "no-store",
+            headers: { Accept: "application/vnd.github+json" }, cache: "no-store", signal: abort.signal,
         });
         if (response.status === 404) return { version, available: false, reason: "该版本尚未发布可安装的 Release。" };
         if (!response.ok) throw new Error("无法读取 Release，请检查网络后重试。");
@@ -30,7 +36,7 @@ export function installPluginUpdater(ctx) {
         const url = `https://github.com/${repository}/releases/download/${tag}/${name}`;
         const asset = release.assets?.find((item) => item.name === name && item.state === "uploaded" && item.browser_download_url === url);
         const available = release.tag_name === tag && !release.draft && !release.prerelease && Boolean(asset);
-        return { version, available, reason: available ? "" : "该版本安装包尚未就绪，请稍后重新检查更新。", url };
+        return { version, available, reason: available ? "" : "该版本安装包尚未就绪，请稍后重新检查更新。", url, digest: asset?.digest };
     };
     const respond = (res, status, value) => {
         if (res.destroyed || res.writableEnded) return;
@@ -60,9 +66,31 @@ export function installPluginUpdater(ctx) {
             void (async () => {
                 const info = await candidate(version);
                 if (!info.available) throw new Error(info.reason);
-                const result = await manager.installBundle(info.url, { enabled: true });
-                if (!["applied", "restart-required"].includes(result.application) || result.bundle !== packageName) {
-                    throw new Error(`安装更新未完成（${result.error?.code || result.application}）。请在 DSH 插件管理页面查看详情。`);
+                if (!/^sha256:[a-f0-9]{64}$/.test(info.digest || "")) throw new Error("Release 安装包缺少有效的 SHA-256，请联系发布者重新发布。");
+                const root = join(manager.profile.dir, ".plugin-manager", "downloads");
+                await mkdir(root, { recursive: true });
+                const directory = await mkdtemp(join(root, `${packageName}-`));
+                const file = join(directory, `${packageName}-${info.version}.tgz`);
+                let installStarted = false;
+                try {
+                    try {
+                        const response = await fetch(info.url, { cache: "no-store", signal: abort.signal });
+                        if (!response.ok || !response.body) throw new Error("下载失败");
+                        await pipeline(Readable.fromWeb(response.body), createWriteStream(file, { flags: "wx" }), { signal: abort.signal });
+                    } catch { throw new Error("下载安装包失败，请检查 GitHub 网络连接后重试；尚未执行安装。"); }
+                    const hash = createHash("sha256");
+                    for await (const chunk of createReadStream(file)) hash.update(chunk);
+                    if (`sha256:${hash.digest("hex")}` !== info.digest) throw new Error("安装包 SHA-256 校验失败，请重新下载；尚未执行安装。");
+                    abort.signal.throwIfAborted();
+                    // DSH 将本地包路径写入 profile，安装开始后保留该文件供后续依赖重装使用。
+                    installStarted = true;
+                    const result = await manager.installBundle(file, { enabled: true });
+                    if (!["applied", "restart-required"].includes(result.application) || result.bundle !== packageName) {
+                        throw new Error(`安装包已下载并校验，但 DSH 安装未完成（${result.error?.code || result.application}）。请在 DSH 插件管理页面查看详情。`);
+                    }
+                } catch (error) {
+                    if (!installStarted) await rm(directory, { recursive: true, force: true }).catch(() => {});
+                    throw error;
                 }
                 installedVersion = info.version;
                 respond(res, 200, { installed: true, version: installedVersion, restartRequired: true });
