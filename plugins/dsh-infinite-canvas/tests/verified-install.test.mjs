@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { cp, link, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { join, relative, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -246,4 +247,22 @@ test("DSH 原生安装事务 + pnpm：link 和连续正式包升级保留源码"
         assert.equal(await readFile(join(f.source, "keep.txt"), "utf8"), "源码必须保留");
         assert.equal(await readFile(join(f.modules, "other-plugin/keep.txt"), "utf8"), "其他插件");
     }
+});
+
+test("通过 Cordis 宿主服务代理调用时仍进入安全事务", nativeOptions, async (t) => {
+    const f = await fixture(t, true);
+    const require = createRequire(pathToFileURL(native));
+    const { Context } = await import(pathToFileURL(require.resolve("@deepseek-ai/cordis")));
+    const { PluginManager } = await import(pathToFileURL(native));
+    const root = new Context();
+    root.provide("profileContext", { ...f.manager.profile, startedBundles: [] });
+    await root.plugin({ name: "canvas-update-test-service", apply(ctx) { new PluginManager(ctx, { fallbackRegistries: [] }); } });
+    t.after(() => root.fiber.dispose());
+    const manager = root.get("pluginManager");
+    for (const key of ["registries", "runPnpm", "configure", "selectBundle"]) manager[key] = f.manager[key];
+    const { file, directory } = await f.build("1.0.1");
+    const result = await installVerifiedBundle(manager, file, "1.0.1", directory);
+    assert.equal(result.application, "restart-required", JSON.stringify(result));
+    assert.equal(await readFile(join(f.source, "keep.txt"), "utf8"), "源码必须保留");
+    assert.equal(JSON.parse(await readFile(join(directory, "recovery.json"))).status, "installed");
 });
