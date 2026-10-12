@@ -3,9 +3,7 @@ import { App } from "antd";
 import { useTranslation } from "react-i18next";
 import { APP_VERSION } from "@/constant/env";
 import { parseChangelog, type ReleaseInfo } from "@/lib/release";
-
-const latestVersionUrl = "https://raw.githubusercontent.com/basketikun/infinite-canvas/main/VERSION";
-const latestChangelogUrl = "https://raw.githubusercontent.com/basketikun/infinite-canvas/main/CHANGELOG.md";
+import { fetchReleaseInfo } from "@/services/api/releases";
 
 function readLocalReleases(): ReleaseInfo[] {
     return __APP_RELEASES__ || [];
@@ -32,35 +30,40 @@ export function useVersionCheck() {
     const [releases, setReleases] = useState<ReleaseInfo[]>(localReleases);
     const [checking, setChecking] = useState(false);
     const [open, setOpen] = useState(false);
-    const hasNewVersion = isNewerVersion(latestVersion, currentVersion);
+    const [error, setError] = useState("");
+    const hasNewVersion = !error && isNewerVersion(latestVersion, currentVersion);
 
     const checkLatestVersion = useCallback(async () => {
         try {
-            const response = await fetch(latestVersionUrl);
-            if (!response.ok) return false;
-            const version = await response.text();
-            setLatestVersion(version.trim() || currentVersion);
+            const { version } = await fetchReleaseInfo();
+            if (!toVersionParts(version)) throw new Error(t("version.readFailed"));
+            setLatestVersion(version);
+            setError("");
             return true;
-        } catch {
+        } catch (reason) {
+            setLatestVersion(currentVersion);
+            setReleases(localReleases);
+            setError(reason instanceof Error ? reason.message : t("version.updateFailed"));
             return false;
         }
-    }, [currentVersion]);
+    }, [currentVersion, localReleases, t]);
 
     const checkLatestRelease = useCallback(
         async (showMessage = false) => {
             setChecking(true);
             try {
-                const [versionResponse, changelogResponse] = await Promise.all([fetch(latestVersionUrl), fetch(latestChangelogUrl)]);
-                if (!versionResponse.ok) throw new Error(t("version.readFailed"));
-                if (!changelogResponse.ok) throw new Error(t("version.changelogFailed"));
-                const [version, changelog] = await Promise.all([versionResponse.text(), changelogResponse.text()]);
-                setLatestVersion(version.trim() || currentVersion);
-                if (changelog.trim()) setReleases(parseChangelog(changelog));
+                const { version, changelog } = await fetchReleaseInfo(true);
+                if (!toVersionParts(version)) throw new Error(t("version.readFailed"));
+                if (!changelog?.trim()) throw new Error(t("version.changelogFailed"));
+                setLatestVersion(version);
+                setReleases(parseChangelog(changelog));
+                setError("");
                 if (showMessage) message.success(t("version.updated"));
                 return true;
-            } catch {
+            } catch (reason) {
                 setLatestVersion(currentVersion);
                 setReleases(localReleases);
+                setError(reason instanceof Error ? reason.message : t("version.updateFailed"));
                 if (showMessage) message.error(t("version.updateFailed"));
                 return false;
             } finally {
@@ -87,6 +90,7 @@ export function useVersionCheck() {
         releases,
         checking,
         hasNewVersion,
+        error,
         checkLatestRelease,
     };
 }

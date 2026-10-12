@@ -6,7 +6,9 @@
       config:
         serverName: infinite-canvas
         transport: stdio
-        command: node
+        command: !!js process.execPath
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
         args:
           - !!js process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-infinite-canvas/agent')
           - mcp

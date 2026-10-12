@@ -29,7 +29,7 @@ export default {
         imageReadFailed: "Failed to read image",
     },
     settingsPanels: {
-        common: { auto: "Auto", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high" },
+        common: { auto: "Auto", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Maximum" },
         image: { title: "Image settings", quality: "Quality", size: "Size", align16: "Align to multiples of 16", align16Hint: "Round dimensions up to the next multiple of 16 after input", resolution: "Resolution", aspectRatio: "Aspect ratio", transparent: "Transparent background", transparentHint: "Generate an image without a background when supported by the model", count: "Image count", images: "{{count}} images" },
         video: { title: "Video settings", quality: "Quality", size: "Size", seconds: "Seconds", mode: "Mode", modes: { frames: "First & last frame", reference: "General reference" }, resolution: "Resolution", ratio: "Aspect ratio", duration: "Duration", smart: "Smart", output: "Output", generateAudio: "Generate audio", watermark: "Add watermark", adaptive: "Adaptive", sizes: { landscape: "Landscape", portrait: "Portrait", square: "Square", widescreen: "Widescreen", tall: "Tall", auto: "Auto" }, ratios: { landscape: "Landscape", portrait: "Portrait", square: "Square", standardLandscape: "Standard landscape", standardPortrait: "Standard portrait", cinematic: "Cinematic", adaptive: "Adaptive" } },
         audio: { title: "Audio settings", voice: "Voice", format: "Format", speed: "Speed", instructions: "Voice instructions", instructionsPlaceholder: "For example: natural, warm, and suitable for narration." },
@@ -40,7 +40,7 @@ export default {
     imageReferences: { label: "Image {{index}}", separator: ", ", promptPrefix: "Reference image labels: {{labels}}. Use these labels to interpret image references in the prompt.\n\n{{prompt}}" },
     modelPlugin: {
         pollTimeout: "Plugin polling timed out. Check the request script or try again later.", executionFailed: "Model request script failed: {{message}}", noImages: "The model request script did not return any images",
-        variables: { prompt: "User prompt with the system prompt already included", images: "Reference images as a data URL array, available for image editing and image-to-video", videos: "Reference videos as a File array you can form.append; empty when none are attached from the canvas or workbench", audios: "Reference audio as a File array you can form.append; empty when none are attached from the canvas or workbench", messages: "Conversation message array including the system message", params: "Generation parameters: image {size,quality,count,background}, video {mode,seconds,size,resolution,ratio,generateAudio,watermark} (mode is frames for first/last frame or reference for general references; more than 2 images become reference), audio {voice,format,speed,instructions}", model: "Model name without the provider prefix", baseUrl: "Provider endpoint as entered, without appending /v1", apiKey: "Provider API key; add it to request headers yourself", systemPrompt: "Original system prompt", reasoningEffort: "Text reasoning effort; auto lets the script decide whether to send it", http: "Convenience client: http.post(path, body, {headers,params,responseType}), http.get(path, opts), and http.url(path). Authorization: Bearer apiKey is included by default and can be overridden. Relative paths append /v1 to baseUrl.", request: "Raw request({ method, url, headers, params, data, responseType }) with no default headers. Add authentication yourself. Relative URLs are joined to baseUrl without /v1.", poll: "poll(request, extract, {intervalMs,timeoutMs}) continues until extract returns a truthy value", sleep: "Delay with sleep(ms)", signal: "Cancellation signal that can be passed to http/request", onDelta: "Push streaming text with onDelta(text) for text models" },
+        variables: { prompt: "User prompt with the system prompt already included", images: "Reference images as a data URL array, available for image editing and image-to-video", videos: "Reference videos as a File array you can form.append; empty when none are attached from the canvas or workbench", audios: "Reference audio as a File array you can form.append; empty when none are attached from the canvas or workbench", messages: "Conversation message array including the system message", params: "Generation parameters: image {size,resolution,quality,count,background}, video {mode,seconds,size,resolution,ratio,generateAudio,watermark} (mode is frames for first/last frame or reference for general references; more than 2 images become reference), audio {voice,format,speed,instructions}", model: "Model name without the provider prefix", baseUrl: "Provider endpoint as entered, without appending /v1", apiKey: "Provider API key; add it to request headers yourself", systemPrompt: "Original system prompt", reasoningEffort: "Text reasoning effort; auto lets the script decide whether to send it", http: "Convenience client: http.post(path, body, {headers,params,responseType}), http.get(path, opts), and http.url(path). Authorization: Bearer apiKey is included by default and can be overridden. Relative paths append /v1 to baseUrl.", request: "Raw request({ method, url, headers, params, data, responseType }) with no default headers. Add authentication yourself. Relative URLs are joined to baseUrl without /v1.", poll: "poll(request, extract, {intervalMs,timeoutMs}) continues until extract returns a truthy value", sleep: "Delay with sleep(ms)", signal: "Cancellation signal that can be passed to http/request", onDelta: "Push streaming text with onDelta(text) for text models" },
         returns: { image: "Text-to-image and image editing use different APIs; distinguish them by whether images is empty. Return an image URL or data URL, an array of them, or [{ dataUrl }] / [{ url }] / [{ b64_json }].", video: "Poll inside the script and return { url }, { blob }, or a video URL string.", audio: "Return a Blob, base64/data URL string, or { b64_json } / { data } / { url }.", text: "Push streaming output with onDelta(text), then return the complete text string." },
         templates: { openai: "OpenAI format", gemini: "Gemini format" },
         authoring: {
@@ -217,7 +217,7 @@ export default {
     canvas: {
         defaultTitle: "Infinite Canvas {{count}}",
         library: "Canvas library",
-        title: "Infinite Canvas",
+        title: "My Canvases",
         imported: "Imported {{count}} canvases",
         importFailed: "Import failed. Select a valid canvas package.",
         opening: "Opening canvas...",
@@ -231,7 +231,7 @@ export default {
         emptyDescription: "Create a canvas to save its nodes, connections, and appearance independently.",
         collapsePanel: "Collapse panel",
         expandPanel: "Expand panel",
-        home: "Home",
+        home: "My Canvases",
         docs: "Documentation",
         projects: "My Canvases",
         deleteCurrent: "Delete current canvas",
@@ -251,6 +251,10 @@ export default {
         agentDisconnected: "Codex disconnected",
         connecting: "Connecting",
         openAgent: "Open local Codex panel",
+        dshConnected: "DSH canvas connected",
+        dshConnecting: "Connecting DSH canvas",
+        dshDisconnected: "DSH canvas disconnected",
+        openDshChat: "Return to DSH chat",
         nodeTypes: { image: "Image", text: "Text", config: "Generation config", video: "Video", audio: "Audio", group: "Group" },
         toolbar: {
             select: "Select", pan: "Move", focus: "Center focus", text: "Text", image: "Image", video: "Video", audio: "Audio", config: "Generation config", group: "Group", extensions: "Extension nodes", upload: "Upload assets", appearance: "Canvas appearance", clear: "Clear canvas",
@@ -367,6 +371,10 @@ export default {
         changelogFailed: "Failed to read changelog",
         updated: "Latest version information loaded",
         updateFailed: "Failed to load the latest version information",
+        source: "Update source",
+        unknown: "Unavailable",
+        repositoryUnavailable: "Cannot read this repository. Check your connection and repository access.",
+        localFallback: "Showing the installed version's local changelog.",
         types: { added: "Added", fixed: "Fixed", changed: "Changed", optimized: "Optimized", docs: "Docs" },
     },
     config: {
@@ -501,6 +509,8 @@ export default {
             defaultTextModel: "Default text model",
             defaultAudioModel: "Default audio model",
             generation: "Generation preferences",
+            imageResolution: "Default image resolution",
+            videoResolution: "Default video resolution",
             canvasImageCount: "Default canvas image count",
             canvasImageCountDescription: "Used by new canvas image and configuration nodes. Individual nodes can override it.",
             regenerateBehavior: "When generating on a node that already has content",

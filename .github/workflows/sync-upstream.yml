@@ -1,0 +1,79 @@
+name: Sync Upstream
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Prepare upstream review branch
+        id: sync
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch https://github.com/basketikun/infinite-canvas.git main
+          upstream=$(git rev-parse FETCH_HEAD)
+          if git merge-base --is-ancestor "$upstream" origin/main; then
+            echo "main 已包含最新上游提交。" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          branch="codex/sync-upstream-${upstream:0:12}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null; then
+            git fetch origin "$branch"
+            git switch --detach FETCH_HEAD
+          else
+            git switch -c "$branch" "$upstream"
+            # 本分支独立发版，保留自己的版本号和日志；上游提交记录放进同步 PR。
+            git restore --source=origin/main --staged --worktree -- VERSION CHANGELOG.md
+            if ! git diff --cached --quiet; then
+              git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Keep fork version and changelog'
+            fi
+            git push origin "HEAD:refs/heads/$branch"
+          fi
+          {
+            echo '## Summary'
+            echo
+            echo '上游更新 → 本仓库同步分支 → 冲突处理与审查 → 用户确认后合并 main'
+            echo
+            echo '保留本分支 VERSION 和 CHANGELOG.md；本次上游提交：'
+            git log --format='- %h %s' "origin/main..$upstream"
+            echo
+            echo '## Evidence'
+            echo
+          } > upstream-sync.md
+          if git merge-tree --write-tree origin/main HEAD > upstream-merge.txt; then
+            echo 'Git 三方合并未发现文本冲突；未运行构建或测试，仍需审查行为变化。' >> upstream-sync.md
+          else
+            status=$?
+            if [ "$status" -ne 1 ]; then cat upstream-merge.txt; exit "$status"; fi
+            echo '存在合并冲突，需在此分支处理后才能合并：' >> upstream-sync.md
+            git merge-tree --write-tree --name-only origin/main HEAD > upstream-conflicts.txt || [ "$?" -eq 1 ]
+            cat upstream-conflicts.txt >> upstream-sync.md
+          fi
+          {
+            echo
+            echo '## Merge Danger'
+            echo
+            echo '**Door:** two-way'
+            echo
+            echo '**Blast Radius:** 画布'
+            echo
+            echo '需保留 DSH 会话绑定、临时侧边栏选择、桥接协议与本地存储。禁止自动合并或整体覆盖冲突文件。'
+          } >> upstream-sync.md
+          cat upstream-sync.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number // empty')" ]; then
+            gh pr create --draft --head "$branch" --base main --title "同步上游 ${upstream:0:12}" --body-file upstream-sync.md
+          fi

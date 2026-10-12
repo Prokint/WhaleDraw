@@ -1,0 +1,49 @@
+---
+title: 本分支更新与上游同步
+description: 版本来源、同步分支与冲突处理流程
+---
+
+# 本分支更新与上游同步
+
+## 版本来源
+
+应用只读取 `Prokint/infinite-canvas-dsh` 的 `main` 分支中的 `VERSION` 和 `CHANGELOG.md`。
+仓库已公开，浏览器直接读取公开文件，无需 GitHub 凭据。读取失败时标明最新版本未能读取，并显示已安装版本的本地日志。
+检查更新只获取信息；代码更新、打包和安装由本仓库的维护与发版流程完成。
+
+`origin` 是本仓库，`upstream` 是 `basketikun/infinite-canvas`。上游的新版本先在本仓库同步和处理冲突，审查通过并经用户确认后才合并到 `main`。
+本分支独立维护 `VERSION` 和 `CHANGELOG.md`，同步上游不会直接采用上游版本号。发版本时遵循根目录 `AGENTS.md` 的发版流程。
+
+## 在 GitHub 准备同步
+
+打开本仓库 Actions，选择 **Sync Upstream → Run workflow**。
+工作流抓取上游 `main`，创建以 `codex/sync-upstream-` 开头的分支和草稿 PR，保留本分支的版本号、日志，并在运行摘要及 PR 中记录上游提交和冲突情况。
+同一个上游提交重复触发时复用已有分支与 PR，不强推已有修改。工作流不自动合并、不构建、不执行测试。
+
+若创建 PR 被 GitHub 拒绝，检查仓库 Settings → Actions → General 中是否允许 GitHub Actions 创建 PR。
+工作流首次提交到 `main` 后才能从 Actions 页面手动触发。
+参见 [GitHub workflow_dispatch 说明](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)。
+
+## 本地处理冲突
+
+在干净的工作区或独立 worktree 中处理同步 PR。不要在有未提交改动的当前工作区直接拉取或覆盖代码。
+
+```powershell
+git fetch origin
+git switch <同步 PR 的分支>
+git merge origin/main
+git diff --name-only --diff-filter=U
+```
+
+逐个处理冲突，保留上游有效修复和本分支 DSH 适配；不要对整个文件使用 `ours` 或 `theirs`。
+重点检查会话默认绑定、本次临时目标、当前可见侧边栏、同源 iframe、静态资源子路径及浏览器本地存储。
+`VERSION` 和 `CHANGELOG.md` 保持本分支的内容；本次同步的功能变化写入 `Unreleased` 和待验收文档。
+
+```powershell
+git add <已解决的冲突文件>
+git commit
+git push origin HEAD
+```
+
+合并到 `main` 前说明同步内容、是否执行测试、实际验证结果和剩余风险，并取得用户明确同意。
+新增超时、重试次数、大小或并发限制时仍需按 `AGENTS.md` 先确认，不能因为来自上游就跳过。
