@@ -1,16 +1,105 @@
 window.__ModuleLoader__.load({
     id: "dsh-infinite-canvas",
     factory: (require) => {
-        const { createElement: h } = require("react");
+        const { createElement: h, useEffect, useRef } = require("react");
         const panelId = "infinite-canvas";
+        const workbenchId = "infinite-canvas-image";
+        const appPath = "/plugins/dsh-infinite-canvas/app";
+        const canvasRoutes = new Map();
+        const sidebarFrames = new Map();
+        let focusedFrame;
+        let hostContext;
+        const reportOpen = (sessionId, result) => fetch(`${appPath}/host-result?${new URLSearchParams({ sessionId, ...result })}`);
 
-        function CanvasPage() {
+        function CanvasFrame({ side = false, visible = false, fullscreen = false, sessionId, requestId, mode, projectId }) {
+            const frame = useRef(null);
+            const visibility = useRef(visible);
+            visibility.current = visible;
+            const inspections = useRef(new Map());
+            const initialRoute = useRef(mode === "workbench" ? "/image" : side ? canvasRoutes.get(sessionId) || "/" : "/");
+            const currentRequest = useRef(requestId);
+            currentRequest.current = requestId;
+            const prepare = () => {
+                if (!requestId) return;
+                void fetch(`${appPath}/host-request?${new URLSearchParams({ sessionId, requestId })}`, { cache: "no-store" })
+                    .then((response) => response.ok ? response.json() : null)
+                    .then((request) => {
+                        if (request && currentRequest.current === requestId) frame.current?.contentWindow.postMessage({ type: "dsh-infinite-canvas:prepare", ...request }, window.location.origin);
+                    })
+                    .catch((error) => { void reportOpen(sessionId, { requestId, error: error.message }); });
+            };
+            useEffect(prepare, [requestId, mode, projectId]);
+            useEffect(() => {
+                if (!side) return;
+                const element = frame.current;
+                sidebarFrames.set(element, { sessionId, visibility, inspect(request) {
+                    inspections.current.set(request.requestId, request);
+                    element.contentWindow.postMessage({ type: "dsh-infinite-canvas:inspect", ...request }, window.location.origin);
+                } });
+                return () => {
+                    sidebarFrames.delete(element);
+                    if (focusedFrame === element) focusedFrame = undefined;
+                    for (const request of inspections.current.values()) void reportOpen(sessionId, { requestId: request.requestId, error: "侧边栏画布已关闭" });
+                    inspections.current.clear();
+                };
+            }, [side, sessionId]);
+            useEffect(() => {
+                const onMessage = (event) => {
+                    if (event.origin !== window.location.origin || event.source !== frame.current?.contentWindow) return;
+                    if (event.data?.type === "dsh-infinite-canvas:focused") { focusedFrame = frame.current; return; }
+                    if (event.data?.type === "dsh-infinite-canvas:bridge-mounted") {
+                        prepare();
+                        for (const request of inspections.current.values()) frame.current.contentWindow.postMessage({ type: "dsh-infinite-canvas:inspect", ...request }, window.location.origin);
+                        return;
+                    }
+                    if (event.data?.type === "dsh-infinite-canvas:inspected") {
+                        const { requestId, mode, projectId, title, defaultTitle } = event.data;
+                        if (!inspections.current.delete(requestId)) return;
+                        void reportOpen(sessionId, { requestId, mode: visibility.current ? mode : "none", ...(projectId ? { projectId } : {}), title: title || "", defaultTitle: defaultTitle || "" });
+                        return;
+                    }
+                    if (event.data?.type === "dsh-infinite-canvas:prepared") {
+                        if (requestId && event.data.requestId === requestId) {
+                            const { clientId, projectId, error } = event.data;
+                            void reportOpen(sessionId, { requestId, ...(error ? { error } : { clientId, ...(projectId ? { projectId } : {}) }) });
+                        }
+                        return;
+                    }
+                    if (event.data?.type !== "dsh-infinite-canvas:open-chat") return;
+                    const location = frame.current.contentWindow.location;
+                    const currentSessionId = sessionId || hostContext.sidebarRight.mounted.getSnapshot();
+                    if (location.pathname.startsWith(`${appPath}/`)) canvasRoutes.set(currentSessionId, `${location.pathname.slice(appPath.length)}${location.search}`);
+                    const targetPanel = location.pathname.endsWith("/image") ? workbenchId : panelId;
+                    hostContext.layout.selectPanel(null);
+                    if (side) {
+                        if (fullscreen) {
+                            const target = hostContext.sidebarRight.focusedTarget(frame.current);
+                            if (target) hostContext.sidebarRight.toggleFullscreen(target);
+                        }
+                    } else {
+                        requestAnimationFrame(() => hostContext.sidebarRight.openTab(targetPanel));
+                    }
+                };
+                window.addEventListener("message", onMessage);
+                return () => window.removeEventListener("message", onMessage);
+            }, [side, fullscreen, sessionId, requestId, mode, projectId]);
             return h("iframe", {
-                src: "/plugins/dsh-infinite-canvas/app/",
-                title: "无限画布",
+                ref: frame,
+                onLoad: prepare,
+                src: `${appPath}${initialRoute.current}`,
+                title: mode === "workbench" ? "生图工作台" : "无限画布",
                 allow: "clipboard-read; clipboard-write; fullscreen",
                 style: { display: "block", width: "100%", height: "100%", flex: 1, minHeight: 0, border: 0 },
             });
+        }
+
+        function CanvasPage() {
+            return h(CanvasFrame);
+        }
+
+        function CanvasSidebarPage({ useTabInfo, sessionId }) {
+            const { sidebar, tab } = useTabInfo();
+            return h(CanvasFrame, { side: true, visible: tab.visible, fullscreen: sidebar.fullscreen, sessionId, ...tab.navigation.params, ...(tab.kind === workbenchId ? { mode: "workbench" } : {}) });
         }
 
         function CanvasIcon() {
@@ -23,13 +112,47 @@ window.__ModuleLoader__.load({
         }
 
         return {
-            inject: ["slots"],
+            inject: ["slots", "layout", "sidebarRight", "sidebarRightTabs"],
             apply(ctx) {
+                hostContext = ctx;
                 ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: panelId }, CanvasPage));
+                ctx.effect(() => ctx.sidebarRightTabs.register({
+                    id: panelId, kind: panelId, title: () => "无限画布",
+                    guide: [{ id: "canvas", order: 40, title: () => "无限画布", description: () => "在聊天旁打开画布并连接 Agent", icon: CanvasIcon }],
+                }));
+                ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({ name: "sidebar.right.pane.tab", key: panelId }, CanvasSidebarPage));
+                ctx.effect(() => ctx.sidebarRightTabs.register({ id: workbenchId, kind: workbenchId, title: () => "生图工作台" }));
+                ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({ name: "sidebar.right.pane.tab", key: workbenchId }, CanvasSidebarPage));
                 ctx.slots.inject("sidebar.panellist", () => ctx.slots.register(
                     { name: "sidebar.panellist", id: panelId, order: 21, label: () => "无限画布" },
                     CanvasIcon,
                 ));
+                ctx.effect(() => {
+                    let events;
+                    const connect = () => {
+                        events?.close();
+                        const sessionId = ctx.sidebarRight.mounted.getSnapshot();
+                        if (!sessionId) return;
+                        events = new EventSource(`${appPath}/host-events?sessionId=${encodeURIComponent(sessionId)}`);
+                        events.addEventListener("inspect-canvas", (event) => {
+                            const request = JSON.parse(event.data);
+                            if (ctx.sidebarRight.mounted.getSnapshot() !== sessionId) return;
+                            const visible = [...sidebarFrames.entries()].filter(([, frame]) => frame.sessionId === sessionId && frame.visibility.current);
+                            const selected = visible.find(([element]) => element === document.activeElement) || visible.find(([element]) => element === focusedFrame) || visible.at(-1);
+                            if (selected) selected[1].inspect(request);
+                            else void reportOpen(sessionId, { requestId: request.requestId, mode: "none" });
+                        });
+                        events.addEventListener("open-canvas", (event) => {
+                            const params = JSON.parse(event.data);
+                            if (ctx.sidebarRight.mounted.getSnapshot() !== sessionId) return;
+                            try { ctx.sidebarRight.openTab(params.mode === "workbench" ? workbenchId : panelId, { params }); }
+                            catch (error) { void reportOpen(sessionId, { requestId: params.requestId, error: error.message }); }
+                        });
+                    };
+                    const unsubscribe = ctx.sidebarRight.mounted.subscribe(connect);
+                    connect();
+                    return () => { unsubscribe(); events?.close(); };
+                });
             },
         };
     },

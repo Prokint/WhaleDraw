@@ -4,6 +4,7 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useVersionCheck } from "@/hooks/use-version-check";
 import { APP_VERSION } from "@/constant/env";
+import { RELEASE_REPOSITORY } from "@/services/api/releases";
 
 function getTagColor(type: string) {
     if (type === "新增" || type === "Added") return "green";
@@ -25,7 +26,7 @@ type VersionReleaseModalProps = {
 
 export function VersionReleaseModal({ className, style }: VersionReleaseModalProps) {
     const { t } = useTranslation();
-    const { open, setOpen, openReleaseModal, latestVersion, releases, checking, hasNewVersion, checkLatestRelease } = useVersionCheck();
+    const { open, setOpen, openReleaseModal, latestVersion, releases, checking, hasNewVersion, checkLatestRelease, error } = useVersionCheck();
 
     return (
         <>
@@ -58,9 +59,13 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                                 {t(checking ? "version.checking" : "version.checkUpdates")}
                             </button>
                         </div>
-                        <div className="mt-1 text-base font-semibold text-stone-950 dark:text-stone-100">{latestVersion}</div>
+                        <div className="mt-1 text-base font-semibold text-stone-950 dark:text-stone-100">{error ? t("version.unknown") : latestVersion}</div>
                     </div>
                 </div>
+                <p className="mb-4 text-xs text-stone-500 dark:text-stone-400">
+                    {t("version.source")}: <a href={`https://github.com/${RELEASE_REPOSITORY}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">{RELEASE_REPOSITORY}</a>
+                </p>
+                {error ? <p role="status" className="mb-4 text-xs text-stone-500 dark:text-stone-400">{error} {t("version.localFallback")}</p> : null}
                 <div className="max-h-[56vh] overflow-y-auto pr-2">
                     <Timeline
                         items={releases.map((release) => ({

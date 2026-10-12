@@ -29,19 +29,29 @@ pnpm --config.ignore-scripts=true pack --out dist/dsh-infinite-canvas-0.1.0.tgz
 dsh plugin --profile desktop add "file:<安装包的绝对路径>"
 ```
 
-安装器会安装静态服务依赖 `sirv` 与 Canvas Agent 包。运行时由 DSH 的 `webServer` 提供插件自带的静态资源，无需 Vite、额外前端端口或单独的画布进程。DSH Agent 操作画布时仍需启动本地 Canvas Agent。构建产物位于 `dist/app`，属于忽略文件；安装源码目录前必须完成构建。缺少产物时插件会明确报错。
+安装器会安装静态服务依赖 `sirv` 与 Canvas Agent 包。运行时由 DSH 的 `webServer` 提供插件自带的静态资源，无需 Vite 或额外前端端口。首次打开插件时会自动启动本地 Canvas Agent HTTP 进程；DSH 的 MCP 客户端另起一个工具进程。构建产物位于 `dist/app`，属于忽略文件；安装源码目录前必须完成构建。缺少产物时插件会明确报错。
 
 ## 使用与数据
 
+- 版本检查与在线更新日志读取公开的 `Prokint/infinite-canvas-dsh` 仓库；失败时保留安装包自带的日志，不显示为已确认最新。代码同步和冲突处理在本仓库完成，检查更新不会自动安装或替换代码。
+- 插件默认打开「我的画布」，原首页已移除。
+- 当前会话首次提到「画布」「生图」或提出生成、编辑图片的请求时，插件通过 DSH 原生提问界面询问：连接到已有画布、新开画布、不连接任何画布。如果侧边栏已经打开画布，还会显示「连接侧边栏画布：画布名称」。选择已有画布后，在右侧「我的画布」中点选项目；选择新开画布时创建空白项目；选择不连接时右侧直接打开「生图工作台」，不创建或修改画布。
+- 每次新的生图请求都会读取当前可见侧边栏状态。侧边栏与会话默认位置一致时直接使用；不同时询问「当前侧边栏：画布名称（仅本次）」「默认绑定：画布名称」「选择其他画布（仅本次）」。选择其他画布时从列表点选项目。当前侧边栏为生图工作台时也会明确显示。隐藏标签页、关闭或收起的侧边栏不作为当前操作页面，没有当前页面时打开默认位置。
+- 会话默认连接保存在 DSH 宿主本地存储，重启后继续沿用。本次临时位置只用于当前请求，不改默认绑定；下次请求重新判断。只有明确要求「更改连接画布」「重新选择画布连接」，或要求 Agent 调用 `infinite_canvas_open({reselect:true})` 时才保存新的默认位置。项目不存在、选择取消或连接失败时停止当前流程，不会自动改用最近项目或新建项目。
+- 插件在模型开始处理相关请求及画布 MCP 工具执行前等待选择和连接就绪，生成工具执行前再次检查侧边栏。选画布时使用 `canvas_generate_image`；选生图工作台时使用 `workbench_image_get_config` / `workbench_image_generate`，插件会拦截不符合本次选择的生成工具。同一次请求内读取参数和执行生成沿用已确认的目标，侧边栏再次变化时重新询问。
+- 自动打开请求只发给当前聊天所在的 DSH 界面；界面未打开或切换聊天时会返回错误。等待受 DSH 任务的取消信号控制，停止任务、界面断开或前端报错都会结束等待。
+- 在 DSH 聊天右侧的「开始」页点击「无限画布」，即可直接在右侧面板打开插件；也可以从左侧栏进入完整页面。
 - 打开插件后，在无限画布的设置中配置模型接口与 API Key。模型调用保持前端直连；不会自动读取或修改 DSH 的模型配置、凭据。
-- 画布、素材和记录保存在浏览器或 DSH WebView 对应来源的 IndexedDB 中；配置保存在本地存储。数据不按 DSH 会话或项目自动隔离。
+- 画布、素材和记录保存在浏览器或 DSH WebView 对应来源的 IndexedDB 中；配置保存在本地存储。会话关联只记录连接方式和画布 ID，画布库、素材及工作台记录仍共享，不按会话复制或隔离。
 - 当前 `http://127.0.0.1:3000` 的数据不会自动迁移到 DSH；请在原页面导出画布，在插件内导入。清除 DSH 的站点数据也会清除这里保存的数据。
 - 提示词更新、版本检查、远程插件下载和可选 WebDAV 同步沿用原项目行为，封装不等于完全离线。
-- DSH Agent 通过本插件注册的 `infinite-canvas` MCP 工具读写画布。先在插件目录运行 `node node_modules/@basketikun/canvas-agent/dist/index.js`，再在画布的 Agent 连接设置中填入该命令输出的 Local URL 与 Connect token 并点击“连接”。保持画布页面和本地 Canvas Agent 运行，在 DSH 对话中即可要求 Agent 读取或修改当前画布。
+- DSH 桌面版打开画布后会自动连接本地 Canvas Agent，画布左上角显示连接状态；点击状态会打开 DSH 对话，并把当前画布放到聊天右侧面板。保持右侧画布打开，即可在 DSH 对话中使用 `infinite-canvas` MCP 工具读取或修改画布。画布内不再显示 Codex 对话面板，右上角「返回 DSH 聊天」按钮已移除。
+- 桌面版的画布服务与 MCP 使用 DSH 宿主自带的 Node 运行方式，无需先向 Agent 发送连接指令，也不依赖系统 PATH 中的 `node` 命令。
+- 自动连接只支持 DSH 与浏览器同机访问的桌面场景；远程访问 DSH Web 版时，本机桥接接口会拒绝请求。画布模型接口和 API Key 仍在插件自己的设置中配置。
 
 ## 实现与验收
 
-宿主入口 `src/index.mjs` 注册 `/plugins/dsh-infinite-canvas/app` 路由，仅服务打包后的公开资源。客户端入口 `src/client.js` 使用 DSH 的 `main` 与 `sidebar.panellist` 插槽展示同源 iframe。`cordis.yml` 通过 DSH 官方 MCP 客户端注册画布工具；MCP 进程读取本机 Canvas Agent 的配置，不把 Connect token 写入 DSH 配置。React 19 和画布样式留在 iframe 内，插件入口使用 DSH 提供的 React。
+宿主入口 `src/index.mjs` 注册 `/plugins/dsh-infinite-canvas/app` 路由，提供打包后的公开资源及仅本机可读的桥接配置。客户端入口 `src/client.js` 使用 DSH 的 `main`、`sidebar.panellist` 和右侧面板插槽展示同源 iframe。`cordis.yml` 通过 DSH 官方 MCP 客户端注册画布工具；MCP 进程读取本机 Canvas Agent 的配置，不把 Connect token 写入 DSH 配置。React 19 和画布样式留在 iframe 内，插件入口使用 DSH 提供的 React。
 
 插件卸载时通过 Cordis effect 和插槽作用域撤销注册，不删除已保存的画布。已完成生产构建、本机 desktop 配置安装和真实 DSH 宿主 HTTP 检查：首页、内部路由、脚本、样式、图标、配置文件与节点插件清单均返回 200；缺失资源返回 404，不支持的方法返回 405。桌面界面交互及模型调用仍需人工验收。
 

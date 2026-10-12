@@ -3,13 +3,19 @@ import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 
 import { LocalAgentPanel } from "./local-agent-panel";
+import { DshCanvasBridge } from "./dsh-canvas-bridge";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { IS_DSH_PLUGIN } from "@/constant/env";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
 
 export function AgentPanel() {
+    return IS_DSH_PLUGIN ? <DshCanvasBridge /> : <StandaloneAgentPanel />;
+}
+
+function StandaloneAgentPanel() {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const width = useAgentStore((state) => state.width);
