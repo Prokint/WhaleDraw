@@ -1,6 +1,6 @@
 {
   "name": "dsh-infinite-canvas",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "在 DeepSeek Harness 中使用 Infinite Canvas 无限画布创作工作台",
   "type": "module",
   "license": "MIT",
