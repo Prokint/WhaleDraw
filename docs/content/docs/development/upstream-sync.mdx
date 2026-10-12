@@ -14,6 +14,16 @@ description: 版本来源、同步分支与冲突处理流程
 `origin` 是本仓库，`upstream` 是 `basketikun/infinite-canvas`。上游的新版本先在本仓库同步和处理冲突，审查通过并经用户确认后才合并到 `main`。
 本分支独立维护 `VERSION` 和 `CHANGELOG.md`，同步上游不会直接采用上游版本号。发版本时遵循根目录 `AGENTS.md` 的发版流程。
 
+## 统一版本与发版
+
+本分支从 `v0.1.0` 开始独立管理版本。根目录 `VERSION` 是应用、前端包元数据和 DSH 插件安装包的唯一版本来源；文件中的 `v0.1.0` 对应包元数据中的 `0.1.0`。第三方 Canvas Agent 依赖版本与通信、存储协议版本独立管理。现有高版本日志属于上游历史，应用的新版本比较仅以本仓库 `VERSION` 为准。
+
+我们决定何时发布：将 `Unreleased` 整理成新版本记录、提升 `VERSION` 后，在仓库根目录执行 `node scripts/sync-version.mjs`，把版本文件、同步后的包元数据和代码一起提交，再创建并推送相同版本的 Git tag。
+
+前端显示版本在 Vite 启动/构建时直接读取 `VERSION`，包元数据由同步命令更新；DSH 插件构建会自动执行同步命令。发版前须执行同步命令，确保 Git 提交内版本一致。DSH 打包按[插件文档](../../../../plugins/dsh-infinite-canvas/README.md)执行，先构建、再打包，确保安装包版本与资源版本一致。
+
+现有标签工作流用于网页、Docker 镜像和画布扩展；DSH 安装包由我们单独构建和分发，尚未自动发布到 GitHub Release 或 npm。检查更新继续读取本仓库，安装更新由我们执行。
+
 ## 在 GitHub 准备同步
 
 打开本仓库 Actions，选择 **Sync Upstream → Run workflow**。

@@ -20,10 +20,11 @@ dsh plugin --profile desktop add "link:<插件目录的绝对路径>"
 分发给其他机器时，完成上面的构建后，在本插件目录执行：
 
 ```powershell
-pnpm --config.ignore-scripts=true pack --out dist/dsh-infinite-canvas-0.1.0.tgz
+node scripts/build.mjs
+pnpm --config.ignore-scripts=true pack --pack-destination dist
 ```
 
-该命令将现有构建产物打成安装包。也可以在仓库中的本插件目录执行 `npm pack`，由 `prepack` 自动重新构建。接收方执行：
+构建会先从根目录 `VERSION` 同步包版本，再打包为 `dist/dsh-infinite-canvas-<版本号>.tgz`。应用与 DSH 安装包使用同一个版本号；第三方 Canvas Agent 依赖仍按自己的版本安装。也可以在完成构建后执行 `npm pack`，由 `prepack` 重新构建。接收方执行：
 
 ```powershell
 dsh plugin --profile desktop add "file:<安装包的绝对路径>"
