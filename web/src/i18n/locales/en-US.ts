@@ -380,7 +380,7 @@ export default {
         installNow: "Update now",
         installing: "Downloading and installing…",
         installConfirm: "Update to {{version}}",
-        installDescription: "DSH will download and install this repository's release package. Restart DSH afterwards to load the new version. A development directory installation will switch to the release package.",
+        installDescription: "Finish tasks using other plugins first. Updating temporarily rebuilds plugin dependencies, retains backups, and verifies installed files. On failure, it attempts to restore previous dependencies and configuration. Backups use disk space. Restart DSH manually afterwards. A source link installation switches to the release package while keeping the source directory.",
         installedRestart: "Installed. Restart DSH to load the new version.",
         installedPendingRestart: "Installed, restart pending",
         installFailed: "Installation failed. Please retry.",

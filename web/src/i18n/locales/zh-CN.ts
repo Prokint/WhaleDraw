@@ -380,7 +380,7 @@ export default {
         installNow: "立即更新",
         installing: "正在下载安装…",
         installConfirm: "更新到 {{version}}",
-        installDescription: "将下载本仓库发布的安装包并交由 DSH 安装。安装完成后需要重启 DSH 才能加载新版本；开发目录安装会切换为版本安装包。",
+        installDescription: "请先结束使用其他插件的任务。更新会暂时重建插件依赖，保留备份并在安装后复查文件；失败时尝试恢复旧依赖与配置。备份会占用磁盘空间。安装完成后请手动重启 DSH；源码链接安装会切换为正式包，源码目录保留。",
         installedRestart: "安装完成，请重启 DSH 以加载新版本。",
         installedPendingRestart: "已安装，待重启",
         installFailed: "安装更新失败，请重试。",
