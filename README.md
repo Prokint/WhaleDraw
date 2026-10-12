@@ -25,7 +25,7 @@ dsh plugin --profile desktop add "link:<本机插件目录的绝对路径>"
 
 独立运行原应用的方法和功能说明见 [项目文档索引](docs/index.md)。模型接口与 API Key 由浏览器前端配置并直接请求；本地画布数据不会自动与 DSH 会话或其他浏览器来源同步。
 
-版本检查读取本仓库的 `VERSION` 和 `CHANGELOG.md`。上游更新通过本仓库的同步分支审查、处理冲突后合并；流程见 [本分支更新与上游同步](docs/content/docs/development/upstream-sync.mdx)。
+应用和 DSH 安装包统一以根目录 `VERSION` 管理版本；版本检查读取本仓库的 `VERSION` 和 `CHANGELOG.md`。由我们独立发版，上游更新通过同步分支审查、处理冲突后合并；流程见 [本分支更新与上游同步](docs/content/docs/development/upstream-sync.mdx)。
 
 ## 来源与许可
 
