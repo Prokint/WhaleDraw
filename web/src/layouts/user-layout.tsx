@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 
-import { AgentPanel } from "@/components/agent/agent-panel";
+import { DshCanvasBridge } from "@/components/agent/dsh-canvas-bridge";
 import { AppTopNav } from "@/components/layout/app-top-nav";
+import { IS_DSH_PLUGIN } from "@/constant/env";
 
 export default function UserLayout({ children }: { children: ReactNode }) {
     return (
@@ -10,7 +11,7 @@ export default function UserLayout({ children }: { children: ReactNode }) {
                 <AppTopNav />
                 <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
             </div>
-            <AgentPanel />
+            {IS_DSH_PLUGIN ? <DshCanvasBridge /> : null}
         </div>
     );
 }
