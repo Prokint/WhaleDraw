@@ -58,7 +58,7 @@ export function useVersionCheck() {
                 setLatestVersion(version);
                 setReleases(parseChangelog(changelog));
                 setError("");
-                if (showMessage) message.success(t("version.updated"));
+                if (showMessage) message.success(t(isNewerVersion(version, currentVersion) ? "version.newVersionFound" : version === currentVersion ? "version.upToDate" : "version.updated", { version }));
                 return true;
             } catch (reason) {
                 setLatestVersion(currentVersion);

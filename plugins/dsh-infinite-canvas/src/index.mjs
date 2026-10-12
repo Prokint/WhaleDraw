@@ -5,6 +5,7 @@ import sirv from "sirv";
 import { z } from "zod";
 import { loadConfig } from "@basketikun/canvas-agent/dist/config.js";
 import { appPath, installCanvasLauncher } from "./canvas-launcher.mjs";
+import { installPluginUpdater } from "./plugin-update.mjs";
 
 export const name = "dsh-infinite-canvas";
 export const inject = ["webServer", "connection", "tools", "systemPrompt", "userQuestions", "storageDomain"];
@@ -46,6 +47,7 @@ export async function apply(ctx) {
     });
     ctx.effect(() => () => domain.close());
     installCanvasLauncher(ctx, ensureReady, domain.table("sessions"));
+    installPluginUpdater(ctx);
     ctx.effect(() => () => { disposed = true; child?.kill(); });
     const serve = sirv(appDirectory, { single: true, etag: true, dev: true });
     ctx.effect(() => ctx.webServer.register({
