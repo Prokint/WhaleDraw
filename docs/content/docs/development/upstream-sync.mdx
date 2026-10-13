@@ -7,9 +7,11 @@ description: 版本来源、同步分支与冲突处理流程
 
 ## 版本来源
 
-应用只读取 `Prokint/infinite-canvas-dsh` 的 `main` 分支中的 `VERSION` 和 `CHANGELOG.md`。
+应用只读取 `Prokint/WhaleDraw` 的 `main` 分支中的 `VERSION` 和 `CHANGELOG.md`。
 仓库已公开，浏览器直接读取公开文件，无需 GitHub 凭据。读取失败时标明最新版本未能读取，并显示已安装版本的本地日志。
 检查更新只获取信息；代码更新、打包和安装由本仓库的维护与发版流程完成。
+
+仓库由 `Prokint/infinite-canvas-dsh` 改名为 `Prokint/WhaleDraw`；插件包名、MCP、路由与存储标识保持原值。历史 tag、Release、PR 与旧包不重写；旧更新器匹配旧文件名及旧仓库附件 URL，首次切换到新更新来源需备份并手动安装包含改动的新正式包，再重启。源码 link 用户按插件 README 的说明更新源码，避免直接替换链接目标。
 
 `origin` 是本仓库，`upstream` 是 `basketikun/infinite-canvas`。上游的新版本先在本仓库同步和处理冲突，审查通过并经用户确认后才合并到 `main`。
 本分支独立维护 `VERSION` 和 `CHANGELOG.md`，同步上游不会直接采用上游版本号。发版本时遵循根目录 `AGENTS.md` 的发版流程。
@@ -22,7 +24,7 @@ description: 版本来源、同步分支与冲突处理流程
 
 前端显示版本在 Vite 启动/构建时直接读取 `VERSION`，包元数据由同步命令更新；DSH 插件构建会自动执行同步命令。发版前须执行同步命令，确保 Git 提交内版本一致。DSH 打包按[插件文档](../../../../plugins/dsh-infinite-canvas/README.md)执行，先构建、再打包，确保安装包版本与资源版本一致。
 
-现有标签工作流用于网页、Docker 镜像和画布扩展；发布 GitHub Release 后，Publish DSH Plugin 工作流构建对应标签并上传 `dsh-infinite-canvas-<版本>.tgz`，供 DSH 内「立即更新」下载安装。只创建标签不会生成该附件。也可在 Actions 中手动填写已发布的标签补发安装包；已有同名附件不覆盖，失败时由维护者查看工作流日志处理。
+现有标签工作流用于网页、Docker 镜像和画布扩展；发布 GitHub Release 后，Publish DSH Plugin 工作流构建对应标签并上传 `whaledraw-<版本>.tgz`（仅文件名改名，包内身份仍为 `dsh-infinite-canvas`），供 DSH 内「立即更新」下载安装。只创建标签不会生成该附件。也可在 Actions 中手动填写已发布的标签补发安装包；已有同名附件不覆盖，失败时由维护者查看工作流日志处理。
 
 更新入口只安装本仓库已发布且版本较新的安装包，由 DSH 原生插件管理器处理下载、依赖安装与宿主兼容性校验；安装成功后提示用户手动重启 DSH，以加载新代码与前端资源。当前首次发布的 `v0.1.1` 没有安装包，新增工作流和更新入口合并后，首次升级仍需手动安装包含该功能的版本。未发布到 npm。
 

@@ -87,7 +87,7 @@ window.__ModuleLoader__.load({
                 ref: frame,
                 onLoad: prepare,
                 src: `${appPath}${initialRoute.current}`,
-                title: mode === "workbench" ? "生图工作台" : "无限画布",
+                title: mode === "workbench" ? "生图工作台" : "WhaleDraw",
                 allow: "clipboard-read; clipboard-write; fullscreen",
                 style: { display: "block", width: "100%", height: "100%", flex: 1, minHeight: 0, border: 0 },
             });
@@ -117,14 +117,14 @@ window.__ModuleLoader__.load({
                 hostContext = ctx;
                 ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: panelId }, CanvasPage));
                 ctx.effect(() => ctx.sidebarRightTabs.register({
-                    id: panelId, kind: panelId, title: () => "无限画布",
-                    guide: [{ id: "canvas", order: 40, title: () => "无限画布", description: () => "在聊天旁打开画布并连接 Agent", icon: CanvasIcon }],
+                    id: panelId, kind: panelId, title: () => "WhaleDraw",
+                    guide: [{ id: "canvas", order: 40, title: () => "WhaleDraw", description: () => "在聊天旁打开画布并连接 Agent", icon: CanvasIcon }],
                 }));
                 ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({ name: "sidebar.right.pane.tab", key: panelId }, CanvasSidebarPage));
                 ctx.effect(() => ctx.sidebarRightTabs.register({ id: workbenchId, kind: workbenchId, title: () => "生图工作台" }));
                 ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({ name: "sidebar.right.pane.tab", key: workbenchId }, CanvasSidebarPage));
                 ctx.slots.inject("sidebar.panellist", () => ctx.slots.register(
-                    { name: "sidebar.panellist", id: panelId, order: 21, label: () => "无限画布" },
+                    { name: "sidebar.panellist", id: panelId, order: 21, label: () => "WhaleDraw" },
                     CanvasIcon,
                 ));
                 ctx.effect(() => {

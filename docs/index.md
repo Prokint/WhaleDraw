@@ -1,4 +1,4 @@
-# Infinite Canvas Documentation Index
+# WhaleDraw Documentation Index
 
 ## Overview
 

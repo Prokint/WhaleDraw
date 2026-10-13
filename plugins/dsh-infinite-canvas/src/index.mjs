@@ -14,7 +14,7 @@ const appDirectory = fileURLToPath(new URL("../dist/app/", import.meta.url));
 
 export async function apply(ctx) {
     if (!existsSync(new URL("../dist/app/index.html", import.meta.url))) {
-        throw new Error("无限画布尚未打包，请先在 plugins/dsh-infinite-canvas 中运行 node scripts/build.mjs。");
+        throw new Error("WhaleDraw 尚未打包，请先在 plugins/dsh-infinite-canvas 中运行 node scripts/build.mjs。");
     }
     let child;
     let disposed = false;

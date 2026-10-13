@@ -5,6 +5,10 @@ description: Planned follow-up work
 
 # TODO
 
+- 排查 pnpm 11.25 在 Windows 的源码 link 转正式包差异：独立测试中的原生安装及 Cordis 服务代理两项返回「新插件安装目录异常」并回滚，pnpm 11.7 相同样本通过；保留文件复查拦截，禁止通过放宽源码路径检查绕过。当前 3180 的正式包转开发安装包已安装成功。
+
+- WhaleDraw v0.2.0 首次分发验收：正式包就绪后，在独立 profile 验收旧客户端的手动升级与后续页面更新；插件包名及数据存储标识保持原值。
+
 - 在独立副本进一步定位桌面 Electron 与 Web Node 运行时中 pnpm hoisted 链接替换行为的差异：桌面样本曾清空源码，Web Node 24.21.0 样本未复现。安全更新事务已经隔离旧依赖与源码，不依赖这一差异才能生效。
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.

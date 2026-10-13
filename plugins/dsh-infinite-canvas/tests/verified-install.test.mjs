@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { cp, link, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -265,4 +266,20 @@ test("通过 Cordis 宿主服务代理调用时仍进入安全事务", nativeOpt
     assert.equal(result.application, "restart-required", JSON.stringify(result));
     assert.equal(await readFile(join(f.source, "keep.txt"), "utf8"), "源码必须保留");
     assert.equal(JSON.parse(await readFile(join(directory, "recovery.json"))).status, "installed");
+});
+
+test("旧依赖含多目录硬链接和空文件时完成归档复查与安装", async (t) => {
+    const f = await fixture(t);
+    await writeFile(join(f.modules, "empty.txt"), "");
+    await writeFile(join(f.modules, "large.bin"), Buffer.concat(Array.from({ length: 4096 }, (_, i) => createHash("sha256").update(String(i)).digest())));
+    for (let i = 0; i < 8; i++) {
+        const dir = join(f.modules, "scope-" + i);
+        await mkdir(dir);
+        await link(join(f.modules, "large.bin"), join(dir, "shared.bin"));
+    }
+    const { file, directory } = await f.build("1.0.1");
+    assert.equal((await installVerifiedBundle(f.manager, file, "1.0.1", directory)).application, "restart-required");
+    assert.equal(await readFile(join(directory, "previous-node_modules/empty.txt"), "utf8"), "");
+    assert.equal(JSON.parse(await readFile(join(directory, "recovery.json"))).status, "installed");
+    assert.equal(await readFile(join(f.source, "keep.txt"), "utf8"), "源码必须保留");
 });
