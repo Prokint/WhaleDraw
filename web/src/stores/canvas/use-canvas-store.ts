@@ -38,11 +38,13 @@ type CanvasStore = {
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[], deletedProjects?: CanvasDeletedProject[]) => void;
     updateProject: (id: string, patch: CanvasProjectPatch | ((project: CanvasProject) => CanvasProjectPatch)) => void;
-    restoreProject: (id: string, restore: (project: CanvasProject) => Promise<CanvasProjectPatch>, once: boolean) => Promise<{ project: CanvasProject | null; initialized: boolean }>;
+    restoreProject: (id: string, restore: (project: CanvasProject) => Promise<CanvasProjectPatch>, once: boolean) => Promise<CanvasProject | null>;
+    claimVideoTask: (projectId: string, nodeId: string, taskId: string) => (() => void) | null;
 };
 
 type CanvasProjectPatch = Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>;
 const restorations = new Map<string, Promise<void>>();
+const videoTasks = new Map<string, symbol>();
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
@@ -150,16 +152,25 @@ export const useCanvasStore = createDshSharedStore("canvas", () => Object.assign
                 })),
             restoreProject: async (id, restore, once) => {
                 let pending = once ? restorations.get(id) : undefined;
-                const initialized = !pending;
                 if (!pending) {
                     pending = (async () => {
                         const project = get().openProject(id);
-                        if (project) get().updateProject(id, await restore(project));
+                        if (!project) return;
+                        const patch = await restore(project);
+                        // Only hydrate fields that still match the source read before awaiting.
+                        get().updateProject(id, (current) => Object.fromEntries(Object.entries(patch).filter(([key]) => current[key as keyof CanvasProject] === project[key as keyof CanvasProject])));
                     })();
                     if (once) restorations.set(id, pending);
                 }
                 try { await pending; } catch (error) { restorations.delete(id); throw error; }
-                return { project: get().openProject(id), initialized };
+                return get().openProject(id);
+            },
+            claimVideoTask: (projectId, nodeId, taskId) => {
+                const key = JSON.stringify([projectId, nodeId, taskId]);
+                if (videoTasks.has(key)) return null;
+                const owner = Symbol();
+                videoTasks.set(key, owner);
+                return () => { if (videoTasks.get(key) === owner) videoTasks.delete(key); };
             },
         }),
         {

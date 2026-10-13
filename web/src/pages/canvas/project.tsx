@@ -190,7 +190,6 @@ function InfiniteCanvasPage() {
     const applyingHistoryRef = useRef(false);
     const historyPausedRef = useRef(false);
     const writingProjectRef = useRef(false);
-    const resumeVideoRef = useRef(true);
     const rafRef = useRef<number | null>(null);
     const nodeDraggingRef = useRef(false);
     const dragRef = useRef<{
@@ -247,7 +246,8 @@ function InfiniteCanvasPage() {
     const [showImageInfo, setShowImageInfo] = useCanvasProjectField(projectId, "showImageInfo", writingProjectRef);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
-    const [projectLoaded, setProjectLoaded] = useState(false);
+    const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
+    const projectLoaded = loadedProjectId === projectId;
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
@@ -282,7 +282,6 @@ function InfiniteCanvasPage() {
     const selectionBoxRef = useRef(selectionBox);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
-    const videoPollIdsRef = useRef(new Set<string>());
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -318,20 +317,27 @@ function InfiniteCanvasPage() {
     const completeVideoNodeTask = useCallback(
         async (nodeId: string, config: Parameters<typeof buildGenerationConfig>[0], prompt: string, images: Parameters<typeof createVideoGenerationTask>[2], signal: AbortSignal, extra: CanvasNodeData["metadata"] = {}, videos: ReferenceVideo[] = [], audios: ReferenceAudio[] = []) => {
             const task = await createVideoGenerationTask(config, prompt, images, { signal, videos, audios });
-            if (task.provider !== "plugin") {
-                setNodes((prev) => prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, videoTaskId: task.id, videoTaskProvider: task.provider === "gemini" ? "gemini" : "openai", model: config.model } } : item)));
+            const release = useCanvasStore.getState().claimVideoTask(projectId, nodeId, task.id);
+            if (!release) return;
+            try {
+                if (task.provider !== "plugin") {
+                    setNodes((prev) => prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, videoTaskId: task.id, videoTaskProvider: task.provider === "gemini" ? "gemini" : "openai", model: config.model } } : item)));
+                }
+                const video = await storeGeneratedVideo(await waitForVideoGenerationTask(config, task, { signal }));
+                setNodes((prev) => prev.map((item) => (item.id === nodeId ? applyGeneratedVideo(item, video, { prompt, model: config.model, ...extra }) : item)));
+            } finally {
+                release();
             }
-            const video = await storeGeneratedVideo(await waitForVideoGenerationTask(config, task, { signal }));
-            setNodes((prev) => prev.map((item) => (item.id === nodeId ? applyGeneratedVideo(item, video, { prompt, model: config.model, ...extra }) : item)));
         },
-        [],
+        [projectId],
     );
 
     const pollVideoNodeTask = useCallback(
         async (node: CanvasNodeData, silent = false) => {
             const taskId = node.metadata?.videoTaskId;
-            if (!taskId || node.metadata?.content || generationRequestsRef.current.has(node.id) || videoPollIdsRef.current.has(node.id)) return;
-            videoPollIdsRef.current.add(node.id);
+            if (!taskId || node.metadata?.content || generationRequestsRef.current.has(node.id)) return;
+            const release = useCanvasStore.getState().claimVideoTask(projectId, node.id, taskId);
+            if (!release) return;
             let controller: AbortController | undefined;
             try {
                 const generationConfig = buildGenerationConfig(effectiveConfig, node, "video");
@@ -383,14 +389,14 @@ function InfiniteCanvasPage() {
                     ),
                 );
             } finally {
-                videoPollIdsRef.current.delete(node.id);
+                release();
                 if (controller) {
                     finishGenerationRequest(node.id, controller);
                     setRunningNodeId((current) => (current === node.id ? null : current));
                 }
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startGenerationRequest, t],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, projectId, startGenerationRequest, t],
     );
 
     const stopGenerationByRunningId = useCallback((runningId: string) => {
@@ -438,16 +444,15 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!hydrated) return;
-        setProjectLoaded(false);
+        setLoadedProjectId(null);
         let cancelled = false;
         const restore = async () => {
-            const { project, initialized } = await restoreProject(projectId, async (source) => ({
+            const project = await restoreProject(projectId, async (source) => ({
                 nodes: await hydrateCanvasImages(resetInterruptedGeneration(source.nodes)),
                 chatSessions: await hydrateAssistantImages(source.chatSessions || []),
             }), IS_DSH_PLUGIN);
             if (cancelled) return;
             if (!project) { navigate("/canvas", { replace: true }); return; }
-            resumeVideoRef.current = initialized;
             setNodes(project.nodes);
             setConnections(project.connections);
             setChatSessions(project.chatSessions);
@@ -469,7 +474,7 @@ function InfiniteCanvasPage() {
                 showImageInfo: project.showImageInfo || false,
             };
             setHistoryState({ canUndo: false, canRedo: false });
-            setProjectLoaded(true);
+            setLoadedProjectId(projectId);
         };
         void restore();
         return () => { cancelled = true; };
@@ -496,11 +501,11 @@ function InfiniteCanvasPage() {
     }, [navigate, projectId, projectLoaded]);
 
     useEffect(() => {
-        if (!projectLoaded || !resumeVideoRef.current) return;
+        if (!projectLoaded) return;
         nodesRef.current.filter(hasResumableVideoTask).forEach((node) => void pollVideoNodeTask(node, true));
-        // Resume once after the current canvas is restored, not on later config identity changes.
+        // Every mounted view may resume; the shared task claim prevents duplicate polling.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectLoaded]);
+    }, [projectId, projectLoaded]);
 
     useEffect(() => {
         if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;
@@ -1596,6 +1601,7 @@ function InfiniteCanvasPage() {
     }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message, t]);
 
     useEffect(() => {
+        if (!projectLoaded) return;
         const handleKeyDown = (event: KeyboardEvent) => {
             const target = event.target instanceof Element ? event.target : null;
             if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom],[data-canvas-shortcuts-ignore]")) return;
@@ -1681,7 +1687,7 @@ function InfiniteCanvasPage() {
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [copySelectedNodes, deleteConnection, deleteNodes, groupSelection, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas, ungroupSelection]);
+    }, [copySelectedNodes, deleteConnection, deleteNodes, groupSelection, pasteCopiedNodes, pasteSystemClipboard, projectLoaded, redoCanvas, selectedConnectionId, setConnecting, undoCanvas, ungroupSelection]);
 
     const handleConnectStart = useCallback(
         (event: ReactMouseEvent, nodeId: string, handleType: "source" | "target") => {
