@@ -37,8 +37,12 @@ type CanvasStore = {
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[], deletedProjects?: CanvasDeletedProject[]) => void;
-    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
+    updateProject: (id: string, patch: CanvasProjectPatch | ((project: CanvasProject) => CanvasProjectPatch)) => void;
+    restoreProject: (id: string, restore: (project: CanvasProject) => Promise<CanvasProjectPatch>, once: boolean) => Promise<{ project: CanvasProject | null; initialized: boolean }>;
 };
+
+type CanvasProjectPatch = Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>;
+const restorations = new Map<string, Promise<void>>();
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
@@ -137,8 +141,26 @@ export const useCanvasStore = createDshSharedStore("canvas", () => Object.assign
             replaceProjects: (projects, deletedProjects = []) => set({ projects, deletedProjects }),
             updateProject: (id, patch) =>
                 set((state) => ({
-                    projects: state.projects.map((project) => (project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString() } : project)),
+                    projects: state.projects.map((project) => {
+                        if (project.id !== id) return project;
+                        const changes = typeof patch === "function" ? patch(project) : patch;
+                        if (Object.entries(changes).every(([key, value]) => project[key as keyof CanvasProject] === value)) return project;
+                        return { ...project, ...changes, updatedAt: new Date().toISOString() };
+                    }),
                 })),
+            restoreProject: async (id, restore, once) => {
+                let pending = once ? restorations.get(id) : undefined;
+                const initialized = !pending;
+                if (!pending) {
+                    pending = (async () => {
+                        const project = get().openProject(id);
+                        if (project) get().updateProject(id, await restore(project));
+                    })();
+                    if (once) restorations.set(id, pending);
+                }
+                try { await pending; } catch (error) { restorations.delete(id); throw error; }
+                return { project: get().openProject(id), initialized };
+            },
         }),
         {
             name: CANVAS_STORE_KEY,

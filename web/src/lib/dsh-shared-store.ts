@@ -5,7 +5,7 @@ type DshWindow = Window & { __whaledrawStores?: Map<string, Store> };
 
 // Share data APIs across DSH iframes; each iframe keeps its own React hook instance.
 export function createDshSharedStore<S extends Store>(key: string, create: () => S): S {
-    if (!import.meta.env.BASE_URL.startsWith("/plugins/dsh-infinite-canvas/app/") || window.parent === window) return create();
+    if (!import.meta.env?.BASE_URL?.startsWith("/plugins/dsh-infinite-canvas/app/") || window.parent === window) return create();
     const host = window.parent as DshWindow;
     const stores = host.__whaledrawStores ||= new Map();
     let api = stores.get(key) as S | undefined;
