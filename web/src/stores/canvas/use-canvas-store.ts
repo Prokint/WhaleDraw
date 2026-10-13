@@ -1,3 +1,4 @@
+import { createDshSharedStore } from "@/lib/dsh-shared-store";
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
@@ -47,12 +48,12 @@ let queuedPersistState: PersistedCanvasState | null = null;
 let pendingPersistValue: StorageValue<CanvasStore> | null = null;
 let persistWrite = Promise.resolve();
 
-export function flushCanvasStorage() {
+function flushLocalCanvasStorage() {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
     const value = pendingPersistValue;
     pendingPersistValue = null;
-    if (value) persistWrite = persistWrite.then(() => localForageStorage.setItem(CANVAS_STORE_KEY, JSON.stringify(value)));
+    if (value) persistWrite = persistWrite.then(() => localForageStorage.setItem(CANVAS_STORE_KEY, JSON.stringify(value))).then(() => {});
     return persistWrite;
 }
 
@@ -70,12 +71,12 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         queuedPersistState = nextState;
         pendingPersistValue = value;
         if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => void flushCanvasStorage(), 400);
+        saveTimer = setTimeout(() => void flushLocalCanvasStorage(), 400);
     },
     removeItem: (name) => localForageStorage.removeItem(name),
 };
 
-export const useCanvasStore = create<CanvasStore>()(
+export const useCanvasStore = createDshSharedStore("canvas", () => Object.assign(create<CanvasStore>()(
     persist(
         (set, get) => ({
             hydrated: false,
@@ -152,4 +153,6 @@ export const useCanvasStore = create<CanvasStore>()(
             },
         },
     ),
-);
+), { flushStorage: flushLocalCanvasStorage }));
+
+export function flushCanvasStorage() { return useCanvasStore.flushStorage(); }

@@ -73,7 +73,7 @@ dsh plugin --profile desktop add "file:<安装包的绝对路径>"
 
 ## 实现与验收
 
-宿主入口 `src/index.mjs` 注册 `/plugins/dsh-infinite-canvas/app` 路由，提供打包后的公开资源及仅本机可读的桥接配置。客户端入口 `src/client.js` 使用 DSH 的 `main`、`sidebar.panellist` 和右侧面板插槽展示同源 iframe。会话页面由插件持有，已打开的标签启用 `keepMounted`；关闭标签后用 DOM `moveBefore` 将 iframe 保留在隐藏容器中，重新显示时移动原实例，避免重载和丢失进行中的请求。需要宿主浏览器支持 [Element.moveBefore](https://developer.mozilla.org/en-US/docs/Web/API/Element/moveBefore)。后台实例与连接在退出界面或停用插件时释放，保留期间会占用内存。DSH 的画布工具通过会话专属控制通道按 clientId 投递与回收结果，继续复用上游参数校验与操作转换，不以共享服务的最近焦点决定目标。工具响应等待沿用 Canvas Agent 原有的 30 秒上限，超时结束此次等待；已发给模型的生成请求不会因此自动撤销。`cordis.yml` 通过 DSH 官方 MCP 客户端注册画布工具；MCP 进程读取本机 Canvas Agent 的配置，不把 Connect token 写入 DSH 配置。React 19 和画布样式留在 iframe 内，插件入口使用 DSH 提供的 React。
+宿主入口 `src/index.mjs` 注册 `/plugins/dsh-infinite-canvas/app` 路由，提供打包后的公开资源及仅本机可读的桥接配置。客户端入口 `src/client.js` 使用 DSH 的 `main`、`sidebar.panellist` 和右侧面板插槽展示同源 iframe。会话页面由插件持有，已打开的标签启用 `keepMounted`；关闭标签后用 DOM `moveBefore` 将 iframe 保留在隐藏容器中，重新显示时移动原实例，避免重载和丢失进行中的请求。需要宿主浏览器支持 [Element.moveBefore](https://developer.mozilla.org/en-US/docs/Web/API/Element/moveBefore)。后台实例与连接在退出界面或停用插件时释放，保留期间会占用内存。每个 DSH 页面使用一条宿主事件流承载多个会话，画布工具按会话和 clientId 投递与回收结果，继续复用上游参数校验与操作转换，不以共享服务的最近焦点决定目标。多个 iframe 共享同一页面内的画布、素材、配置、提示词源与插件数据存储，避免不同会话各自持有旧快照时互相覆盖；Agent 上下文仍按 iframe 隔离。工具响应等待沿用 Canvas Agent 原有的 30 秒上限，超时结束此次等待；已发给模型的生成请求不会因此自动撤销。`cordis.yml` 通过 DSH 官方 MCP 客户端注册画布工具；MCP 进程读取本机 Canvas Agent 的配置，不把 Connect token 写入 DSH 配置。React 19 和画布样式留在 iframe 内，插件入口使用 DSH 提供的 React。
 
 插件卸载时通过 Cordis effect 和插槽作用域撤销注册，不删除已保存的画布。已完成生产构建、本机 desktop 配置安装和真实 DSH 宿主 HTTP 检查：首页、内部路由、脚本、样式、图标、配置文件与节点插件清单均返回 200；缺失资源返回 404，不支持的方法返回 405。桌面界面交互及模型调用仍需人工验收。
 

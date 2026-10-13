@@ -6,11 +6,13 @@ window.__ModuleLoader__.load({
         const workbenchId = "infinite-canvas-image";
         const appPath = "/plugins/dsh-infinite-canvas/app";
         const frames = new Map();
-        const sessions = new Map();
+        const sessions = new Set();
+        const uiId = crypto.randomUUID();
         const canvasRoutes = new Map();
         let focusedFrame;
         let hostContext;
         let parking;
+        let events;
         const reportOpen = (sessionId, result) => fetch(`${appPath}/host-result?${new URLSearchParams({ sessionId, ...result })}`);
         const visible = (record) => record.view?.visible && hostContext.sidebarRight.mounted.getSnapshot() === record.sessionId;
         const send = (record, type, request) => record.element.contentWindow.postMessage({ type: `dsh-infinite-canvas:${type}`, ...request }, window.location.origin);
@@ -42,12 +44,22 @@ window.__ModuleLoader__.load({
             return record;
         };
         const sessionFrames = (sessionId) => [...frames.values()].filter((record) => record.sessionId === sessionId);
+        const joinSession = (sessionId) => fetch(`${appPath}/host-session?${new URLSearchParams({ uiId, sessionId })}`);
         const connectSession = (sessionId) => {
             if (!sessionId || sessions.has(sessionId)) return;
-            const events = new EventSource(`${appPath}/host-events?sessionId=${encodeURIComponent(sessionId)}`);
-            sessions.set(sessionId, events);
+            sessions.add(sessionId);
+            if (events?.readyState === EventSource.OPEN) void joinSession(sessionId);
+        };
+        const connectEvents = () => {
+            events = new EventSource(`${appPath}/host-events?uiId=${encodeURIComponent(uiId)}`);
+            events.onopen = () => {
+                for (const sessionId of sessions) void joinSession(sessionId);
+                for (const record of frames.values()) if (record.mounted) send(record, "host-status", { connected: true });
+            };
+            events.onerror = () => { for (const record of frames.values()) if (record.mounted) send(record, "host-status", { connected: false }); };
             events.addEventListener("inspect-canvas", (event) => {
                 const request = JSON.parse(event.data);
+                const sessionId = request.sessionId;
                 const candidates = sessionFrames(sessionId).filter(visible);
                 const selected = candidates.find((record) => record.element === document.activeElement) || candidates.find((record) => record.element === focusedFrame) || candidates.at(-1);
                 if (selected) {
@@ -57,6 +69,7 @@ window.__ModuleLoader__.load({
             });
             events.addEventListener("open-canvas", (event) => {
                 const request = JSON.parse(event.data);
+                const sessionId = request.sessionId;
                 try {
                     if (["existing", "new"].includes(request.mode) || request.show && request.mode === "workbench") {
                         hostContext.sidebarRight.openTabIn(sessionId, request.mode === "workbench" ? workbenchId : panelId, { params: request });
@@ -72,6 +85,7 @@ window.__ModuleLoader__.load({
             });
             events.addEventListener("call-canvas", (event) => {
                 const request = JSON.parse(event.data);
+                const sessionId = request.sessionId;
                 const record = sessionFrames(sessionId).find((record) => record.clientId === request.clientId);
                 if (!record?.mounted) {
                     void fetch(`${appPath}/host-tool-result`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId, requestId: request.requestId, clientId: request.clientId, error: "会话画布连接已断开" }) });
@@ -89,6 +103,7 @@ window.__ModuleLoader__.load({
             if (data?.type === "dsh-infinite-canvas:focused") { focusedFrame = record.element; return; }
             if (data?.type === "dsh-infinite-canvas:bridge-mounted") {
                 record.mounted = true;
+                send(record, "host-status", { connected: events?.readyState === EventSource.OPEN });
                 if (record.request) send(record, "prepare", record.request);
                 for (const request of record.inspections.values()) send(record, "inspect", request);
                 return;
@@ -186,11 +201,13 @@ window.__ModuleLoader__.load({
                 parking.hidden = true;
                 document.body.appendChild(parking);
                 window.addEventListener("message", onMessage);
+                connectEvents();
                 ctx.effect(() => () => {
                     window.removeEventListener("message", onMessage);
-                    for (const events of sessions.values()) events.close();
+                    events?.close();
                     for (const record of frames.values()) record.element.remove();
                     sessions.clear(); frames.clear(); parking.remove();
+                    delete window.__whaledrawStores;
                 });
                 ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: panelId }, CanvasPage));
                 ctx.effect(() => ctx.sidebarRightTabs.register({
