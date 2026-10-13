@@ -39,12 +39,10 @@ type CanvasStore = {
     replaceProjects: (projects: CanvasProject[], deletedProjects?: CanvasDeletedProject[]) => void;
     updateProject: (id: string, patch: CanvasProjectPatch | ((project: CanvasProject) => CanvasProjectPatch)) => void;
     restoreProject: (id: string, restore: (project: CanvasProject) => Promise<CanvasProjectPatch>, once: boolean) => Promise<CanvasProject | null>;
-    claimVideoTask: (projectId: string, nodeId: string, taskId: string) => (() => void) | null;
 };
 
 type CanvasProjectPatch = Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>;
 const restorations = new Map<string, Promise<void>>();
-const videoTasks = new Map<string, symbol>();
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
@@ -164,13 +162,6 @@ export const useCanvasStore = createDshSharedStore("canvas", () => Object.assign
                 }
                 try { await pending; } catch (error) { restorations.delete(id); throw error; }
                 return get().openProject(id);
-            },
-            claimVideoTask: (projectId, nodeId, taskId) => {
-                const key = JSON.stringify([projectId, nodeId, taskId]);
-                if (videoTasks.has(key)) return null;
-                const owner = Symbol();
-                videoTasks.set(key, owner);
-                return () => { if (videoTasks.get(key) === owner) videoTasks.delete(key); };
             },
         }),
         {

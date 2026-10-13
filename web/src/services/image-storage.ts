@@ -60,10 +60,12 @@ async function storeImage(blob: Blob, options?: ImageReadOptions): Promise<Uploa
         throwIfAborted(options?.signal);
         objectUrls.set(storageKey, url);
         await storeImagePreview(storageKey, blob);
+        throwIfAborted(options?.signal);
         return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type.startsWith("image/") ? blob.type : "" };
     } catch (error) {
         URL.revokeObjectURL(url);
-        await store.removeItem(storageKey).catch(() => undefined);
+        objectUrls.delete(storageKey);
+        await Promise.all([deleteImagePreview(storageKey), store.removeItem(storageKey)]).catch(() => undefined);
         throw error;
     }
 }
