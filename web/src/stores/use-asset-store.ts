@@ -1,3 +1,4 @@
+import { createDshSharedStore } from "@/lib/dsh-shared-store";
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
@@ -72,7 +73,7 @@ const assetStorage: PersistStorage<AssetStore> = {
     removeItem: (name) => localForageStorage.removeItem(name),
 };
 
-export const useAssetStore = create<AssetStore>()(
+export const useAssetStore = createDshSharedStore("assets", () => create<AssetStore>()(
     persist(
         (set, get) => ({
             hydrated: false,
@@ -111,4 +112,4 @@ export const useAssetStore = create<AssetStore>()(
             },
         },
     ),
-);
+));

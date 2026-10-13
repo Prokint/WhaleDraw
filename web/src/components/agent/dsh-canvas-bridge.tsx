@@ -4,11 +4,8 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { runSiteTool, isSiteTool } from "@/lib/agent/agent-site-tools";
 import { randomId } from "@/lib/utils";
 import i18n from "@/i18n";
-import { activateAgentClient, postState, postToolResult } from "@/services/api/canvas-agent";
 import { useAgentStore, type AgentPendingToolCall } from "@/stores/use-agent-store";
 import { flushCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
-
-type BridgeConfig = { url: string; token: string };
 
 export function DshCanvasBridge() {
     const navigate = useNavigate();
@@ -23,10 +20,9 @@ export function DshCanvasBridge() {
     useEffect(() => {
         setAgentState({ enabled: true, connected: false, connectError: "", activity: "连接中" });
         const clientId = randomId();
-        let source: EventSource | undefined;
         let disposed = false;
-        let stateTimer: ReturnType<typeof setTimeout> | undefined;
-        let config: BridgeConfig | undefined;
+        let configReady = false;
+        let hostConnected = false;
         const inspections = new Map<string, string>();
         let prepareRequestId = "";
         let lastRequestId = "";
@@ -46,10 +42,10 @@ export function DshCanvasBridge() {
             const snapshot = useAgentStore.getState().canvasContext?.snapshot;
             const workbench = prepareMode === "workbench";
             const pageReady = workbench ? route.current === "/image" && !snapshot : snapshot && snapshot.projectId === preparedProjectId && route.current === `/canvas/${preparedProjectId}`;
-            if (!prepareRequestId || !config || !useAgentStore.getState().connected || !pageReady || reportingReady) return;
+            if (!prepareRequestId || !configReady || !useAgentStore.getState().connected || !pageReady || reportingReady) return;
             reportingReady = true;
             const requestId = prepareRequestId;
-            const posted = await (workbench ? Promise.resolve() : flushCanvasStorage()).then(() => postState(config!.url, config!.token, clientId, workbench ? null : snapshot!)).catch(() => false);
+            const posted = await (workbench ? Promise.resolve() : flushCanvasStorage()).then(() => true).catch(() => false);
             reportingReady = false;
             if (requestId !== prepareRequestId) { void completePrepare(); return; }
             const current = useAgentStore.getState();
@@ -66,7 +62,7 @@ export function DshCanvasBridge() {
             for (const [requestId, defaultProjectId] of inspections) {
                 window.parent.postMessage({ type: "dsh-infinite-canvas:inspected", requestId,
                     mode: project ? "canvas" : route.current === "/image" ? "workbench" : "none",
-                    projectId: project?.id, title: snapshot?.projectId === id ? snapshot.title : project?.title,
+                    projectId: project?.id, title: snapshot && snapshot.projectId === id ? snapshot.title : project?.title,
                     defaultTitle: store.projects.find((project) => project.id === defaultProjectId)?.title,
                 }, window.location.origin);
                 inspections.delete(requestId);
@@ -104,10 +100,23 @@ export function DshCanvasBridge() {
         };
         routeChanged.current = prepareProject;
         const onPrepare = (event: MessageEvent) => {
-            if (event.origin !== window.location.origin || event.source !== window.parent || typeof event.data?.requestId !== "string") return;
+            if (event.origin !== window.location.origin || event.source !== window.parent) return;
+            if (event.data?.type === "dsh-infinite-canvas:host-status") {
+                hostConnected = event.data.connected === true;
+                const connected = configReady && hostConnected;
+                setAgentState({ connected, activity: connected ? "已连接" : "连接中" });
+                if (!hostConnected) reportPrepare({ error: "DSH 画布控制通道已断开" });
+                else prepareProject();
+                return;
+            }
+            if (typeof event.data?.requestId !== "string") return;
             if (event.data.type === "dsh-infinite-canvas:inspect") {
                 inspections.set(event.data.requestId, typeof event.data.defaultProjectId === "string" ? event.data.defaultProjectId : "");
                 reportInspections();
+                return;
+            }
+            if (event.data.type === "dsh-infinite-canvas:tool-call") {
+                void runTool(event.data);
                 return;
             }
             if (event.data.type !== "dsh-infinite-canvas:prepare") return;
@@ -132,20 +141,12 @@ export function DshCanvasBridge() {
         window.addEventListener("pointerdown", notifyFocus);
         window.addEventListener("focus", notifyFocus);
         const unsubscribeCanvas = useCanvasStore.subscribe(prepareProject);
-        const publishState = () => {
-            if (config) void postState(config.url, config.token, clientId, prepareMode === "workbench" ? null : useAgentStore.getState().canvasContext?.snapshot || null);
-        };
-        const unsubscribe = useAgentStore.subscribe((state, previous) => {
-            prepareProject();
-            if (!config || !state.connected || state.canvasContext === previous.canvasContext) return;
-            if (stateTimer) clearTimeout(stateTimer);
-            stateTimer = setTimeout(publishState, 300);
-        });
+        const unsubscribe = useAgentStore.subscribe(prepareProject);
         window.parent.postMessage({ type: "dsh-infinite-canvas:bridge-mounted" }, window.location.origin);
         const runTool = async (call: AgentPendingToolCall) => {
-            const bridge = config;
-            if (!bridge) return;
+            const report = (body: { result?: unknown; error?: string }) => window.parent.postMessage({ type: "dsh-infinite-canvas:tool-result", requestId: call.requestId, clientId, ...body }, window.location.origin);
             try {
+                if (!useAgentStore.getState().connected) throw new Error("DSH 画布控制通道已断开");
                 let result: unknown;
                 if (prepareMode === "workbench" && ((call.name.startsWith("canvas_") && call.name !== "canvas_list_projects") || (call.name === "site_navigate" && /^\/(?:canvas)?(?:\/|$)/.test(call.input?.path || "/")))) {
                     throw new Error("当前会话不连接画布，请在生图工作台生成图片");
@@ -164,7 +165,6 @@ export function DshCanvasBridge() {
                     if (!context) throw new Error("请先打开画布");
                     const snapshot = context.applyOps(call.input?.ops || []);
                     result = snapshot;
-                    await postState(bridge.url, bridge.token, clientId, snapshot);
                 } else if (call.name.startsWith("canvas_") && call.name !== "canvas_create_attachment_nodes") {
                     const snapshot = useAgentStore.getState().canvasContext?.snapshot;
                     if (!snapshot) throw new Error("请先打开画布");
@@ -172,42 +172,18 @@ export function DshCanvasBridge() {
                 } else {
                     throw new Error(`DSH 画布连接不支持 ${call.name}`);
                 }
-                await postToolResult(bridge.url, bridge.token, clientId, { requestId: call.requestId, result });
+                await report({ result });
             } catch (error) {
-                await postToolResult(bridge.url, bridge.token, clientId, { requestId: call.requestId, error: error instanceof Error ? error.message : String(error) });
+                await report({ error: error instanceof Error ? error.message : String(error) });
             }
         };
-        void fetch(`${import.meta.env.BASE_URL}bridge-config`, { cache: "no-store" }).then(async (response) => {
+        void fetch(`${import.meta.env.BASE_URL}bridge-config`, { cache: "no-store" }).then((response) => {
             if (!response.ok) throw new Error("DSH 画布桥接服务未就绪");
-            return response.json() as Promise<BridgeConfig>;
-        }).then((value) => {
+        }).then(() => {
             if (disposed) return;
-            config = value;
-            setAgentState({ enabled: true, activity: "连接中", connectError: "" });
-            source = new EventSource(`${value.url}/events?token=${encodeURIComponent(value.token)}&clientId=${encodeURIComponent(clientId)}`);
-            source.addEventListener("hello", (event) => {
-                if (disposed) return;
-                const hello = JSON.parse(event.data) as { protocolVersion?: number };
-                if (hello.protocolVersion !== 6) {
-                    source?.close();
-                    setAgentState({ enabled: false, connected: false, connectError: "Canvas Agent 协议版本不匹配" });
-                    reportPrepare({ error: "Canvas Agent 协议版本不匹配" });
-                    return;
-                }
-                setAgentState({ enabled: true, connected: true, activity: "已连接", connectError: "" });
-                publishState();
-                void activateAgentClient(value.url, value.token, clientId);
-                prepareProject();
-            });
-            source.addEventListener("tool_call", (event) => {
-                if (!disposed) void runTool(JSON.parse(event.data) as AgentPendingToolCall);
-            });
-            source.onerror = () => {
-                if (!disposed) {
-                    setAgentState({ connected: false, activity: "连接中" });
-                    reportPrepare({ error: "无法连接本地画布服务" });
-                }
-            };
+            configReady = true;
+            setAgentState({ enabled: true, connected: hostConnected, activity: hostConnected ? "已连接" : "连接中", connectError: "" });
+            prepareProject();
         }).catch((error) => {
             if (!disposed) {
                 const text = error instanceof Error ? error.message : String(error);
@@ -223,8 +199,6 @@ export function DshCanvasBridge() {
             window.removeEventListener("message", onPrepare);
             window.removeEventListener("pointerdown", notifyFocus);
             window.removeEventListener("focus", notifyFocus);
-            if (stateTimer) clearTimeout(stateTimer);
-            source?.close();
             setAgentState({ enabled: false, connected: false });
         };
     }, [navigate, setAgentState]);

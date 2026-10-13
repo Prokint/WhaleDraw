@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 
 import i18n from "@/i18n";
 import { useAgentStore } from "@/stores/use-agent-store";
@@ -38,6 +38,7 @@ export function useAgentBridge(params: AgentBridgeParams) {
         params;
     const setAgentCanvasContext = useAgentStore((state) => state.setCanvasContext);
     const [agentUndoSnapshot, setAgentUndoSnapshot] = useState<CanvasAgentSnapshot | null>(null);
+    const lastApplied = useRef<CanvasAgentSnapshot | null>(null);
     const projectTitle = title || i18n.t("canvas.project.untitled");
 
     const agentSnapshot = useMemo<CanvasAgentSnapshot>(() => ({ projectId, title: projectTitle, nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }), [connections, projectTitle, nodes, projectId, selectedNodeIds, viewport]);
@@ -54,6 +55,7 @@ export function useAgentBridge(params: AgentBridgeParams) {
             connectionsRef.current = next.connections;
             selectedNodeIdsRef.current = new Set(next.selectedNodeIds);
             viewportRef.current = next.viewport;
+            lastApplied.current = next;
             setAgentUndoSnapshot(before);
             setNodes(next.nodes);
             setConnections(next.connections);
@@ -76,6 +78,10 @@ export function useAgentBridge(params: AgentBridgeParams) {
     );
     const undoAgentOps = useCallback(() => {
         if (!agentUndoSnapshot) return null;
+        if (nodesRef.current !== lastApplied.current?.nodes || connectionsRef.current !== lastApplied.current?.connections) {
+            setAgentUndoSnapshot(null);
+            return null;
+        }
         nodesRef.current = agentUndoSnapshot.nodes;
         connectionsRef.current = agentUndoSnapshot.connections;
         selectedNodeIdsRef.current = new Set(agentUndoSnapshot.selectedNodeIds);
@@ -87,8 +93,16 @@ export function useAgentBridge(params: AgentBridgeParams) {
         setViewport(agentUndoSnapshot.viewport);
         setContextMenu(null);
         setAgentUndoSnapshot(null);
+        lastApplied.current = null;
         return { ...agentUndoSnapshot, projectId, title: projectTitle };
     }, [agentUndoSnapshot, projectTitle, projectId]);
+
+    useEffect(() => {
+        if (lastApplied.current && (nodes !== lastApplied.current.nodes || connections !== lastApplied.current.connections)) {
+            lastApplied.current = null;
+            setAgentUndoSnapshot(null);
+        }
+    }, [nodes, connections]);
 
     useEffect(() => {
         if (!ready) return;
