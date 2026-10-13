@@ -5,7 +5,7 @@ import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { appPath, installCanvasLauncher } from "../src/canvas-launcher.mjs";
 
-function setup(t) {
+function setup(t, { autoRespondCalls = true } = {}) {
     const routes = new Map();
     const handlers = new Map();
     const disposers = [];
@@ -36,13 +36,16 @@ function setup(t) {
             if (chunk.startsWith("event: call-canvas")) {
                 const call = JSON.parse(chunk.split("data: ")[1]);
                 calls.push(call);
-                const body = { sessionId: call.sessionId, requestId: call.requestId, clientId: call.clientId, result: { projectId: "canvas-project", nodes: [], connections: [], selectedNodeIds: [] } };
-                const req = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), request(`${appPath}/host-tool-result`), { method: "POST" });
-                routes.get(`${appPath}/host-tool-result`)(req, response());
+                if (autoRespondCalls) completeCall(call);
             }
         },
         end() { this.emit("close"); },
     });
+    function completeCall(call) {
+        const body = { sessionId: call.sessionId, requestId: call.requestId, clientId: call.clientId, result: { projectId: "canvas-project", nodes: [], connections: [], selectedNodeIds: [] } };
+        const req = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), request(`${appPath}/host-tool-result`), { method: "POST" });
+        routes.get(`${appPath}/host-tool-result`)(req, response());
+    }
     return {
         tool, handlers, calls,
         attach(sessionId, authorization) {
@@ -64,6 +67,7 @@ function setup(t) {
             routes.get(`${appPath}/host-result`)(request(`${appPath}/host-result?${params}`), res);
             return res.status;
         },
+        completeCall,
     };
 }
 
@@ -212,4 +216,44 @@ test("an explicit request to change the canvas connection asks again", async (t)
     assert.equal(request.mode, "new");
     fixture.acknowledge(stream, "chat-a");
     assert.equal(await result, decision);
+});
+
+test("recognizes ordinary requests to change the default canvas", async (t) => {
+    const fixture = setup(t);
+    const stream = fixture.attach("chat-a");
+    const exec = execution();
+    const initial = fixture.tool.execute({}, exec);
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a");
+    await initial;
+    for (const text of ["切换到新的默认画布。", "把画布1设置为默认画布。", "将默认画布改为画布2。"] ) {
+        const decision = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text }] }] };
+        const result = fixture.handlers.get("agent/pre-step")(exec, async () => decision);
+        await setImmediate();
+        const request = JSON.parse(stream.chunks.findLast((chunk) => chunk.startsWith("event: open-canvas")).split("data: ")[1]);
+        assert.equal(request.mode, "new", text);
+        fixture.acknowledge(stream, "chat-a");
+        assert.equal(await result, decision);
+    }
+});
+
+test("keeps the original 30-second deadline across snapshot and operation calls", async (t) => {
+    const fixture = setup(t, { autoRespondCalls: false });
+    const stream = fixture.attach("chat-a");
+    const connected = fixture.tool.execute({}, execution());
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a");
+    await connected;
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const operation = fixture.handlers.get("tools/execute")({ ...execution(), name: "mcp__infinite-canvas__canvas_create_text_node", arguments: { text: "验收" } }, async () => null);
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a");
+    await setImmediate();
+    assert.equal(fixture.calls[0].name, "canvas_get_state");
+    t.mock.timers.tick(20000);
+    fixture.completeCall(fixture.calls[0]);
+    await setImmediate();
+    assert.equal(fixture.calls[1].name, "canvas_apply_ops");
+    t.mock.timers.tick(10001);
+    await assert.rejects(operation, /画布操作超时/);
 });

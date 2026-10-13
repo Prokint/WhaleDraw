@@ -13,9 +13,10 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
     const targets = new WeakMap();
     const connections = new WeakMap();
     const defaultChanges = new WeakSet();
-    const requestPage = (sessionId, stream, signal, kind, binding) => {
+    const requestPage = (sessionId, stream, signal, kind, binding, deadline) => {
         signal.throwIfAborted();
         if (!clients.get(sessionId)?.has(stream)) throw new Error("DSH 当前聊天界面已断开");
+        if (kind === "call-canvas" && deadline <= Date.now()) throw new Error("画布操作超时");
         const requestId = randomUUID();
         return new Promise((resolve, reject) => {
             let timer;
@@ -29,7 +30,7 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
             pending.set(requestId, { sessionId, stream, kind, binding, finish });
             signal.addEventListener("abort", abort, { once: true });
             // Preserve Canvas Agent's existing tool-response deadline on this transport.
-            if (kind === "call-canvas") timer = setTimeout(() => finish(new Error("画布操作超时")), 30000);
+            if (kind === "call-canvas") timer = setTimeout(() => finish(new Error("画布操作超时")), deadline - Date.now());
             stream.write(`event: ${kind}\ndata: ${JSON.stringify({ requestId, sessionId, ...binding })}\n\n`);
         });
     };
@@ -166,7 +167,8 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
         const input = parseToolInput(name, rawInput);
         const { stream, clientId } = connections.get(exec.agent) || {};
         if (!stream || !clientId) throw new Error("当前会话的画布尚未连接");
-        const call = (name, input) => requestPage(exec.agent.session.id, stream, exec.signal, "call-canvas", { clientId, name, input });
+        const deadline = Date.now() + 30000;
+        const call = (name, input) => requestPage(exec.agent.session.id, stream, exec.signal, "call-canvas", { clientId, name, input }, deadline);
         if (!name.startsWith("canvas_") || name === "canvas_list_projects") return call(name, input);
         const snapshot = await call("canvas_get_state", {});
         if (snapshot?.projectId !== targets.get(exec.agent)?.projectId) throw new Error("会话画布已切换，请重新确认连接");
@@ -254,8 +256,8 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
             defaultChanges.delete(payload.agent);
         }
         if (/画布|生图|出图|绘图|(?:生成|绘制|制作|编辑|修改).*(?:图|照片|海报|封面)|画(?:一|张|个)|\b(?:whaledraw|canvas|draw|text-to-image|generate\s+(?:an?\s+)?image)\b/is.test(text)) {
-            const connectionText = text.replace(/(?:不要|无需|不需要|别)\s*(?:更改|更换|修改|切换|重新选择|重新设置|设为|设置)[^，。！？；\n]*/g, "");
-            const reselect = /(?:更改|更换|修改|切换|重新选择|重新设置|设为|设置)\s*(?:当前|本会话|会话)?的?(?:画布)?(?:连接|绑定|默认)|(?:连接|绑定|默认画布)(?:方式|关系|位置)?\s*(?:更改|更换|修改|切换|重新选择)|infinite_canvas_open.*reselect["']?\s*:\s*true/.test(connectionText);
+            const connectionText = text.replace(/(?:不要|无需|不需要|别)\s*(?:更改|更换|修改|切换|重新选择|重新设置|设为|设置|改为|换成)[^，。！？；\n]*/g, "");
+            const reselect = /(?:更改|更换|修改|切换|重新选择|重新设置|设为|设置|改为|换成)[^，。！？；\n]{0,16}(?:连接|绑定|默认画布)|(?:连接|绑定|默认画布)(?:方式|关系|位置)?\s*(?:更改|更换|修改|切换|重新选择|重新设置|设为|设置|改为|换成)|infinite_canvas_open.*reselect["']?\s*:\s*true/.test(connectionText);
             if (reselect) defaultChanges.add(payload.agent);
             await prepare(payload.agent, payload.signal, reselect, true);
         }
