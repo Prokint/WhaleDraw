@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { appPath, installCanvasLauncher } from "../src/canvas-launcher.mjs";
@@ -9,6 +10,7 @@ function setup(t) {
     const handlers = new Map();
     const disposers = [];
     const activations = [];
+    const calls = [];
     const bindings = new Map();
     let tool;
     const previousFetch = globalThis.fetch;
@@ -34,11 +36,18 @@ function setup(t) {
                 const { requestId } = JSON.parse(chunk.split("data: ")[1]);
                 routes.get(`${appPath}/host-result`)(request(`${appPath}/host-result?${new URLSearchParams({ requestId, sessionId: this.sessionId, mode: "none" })}`), response());
             }
+            if (chunk.startsWith("event: call-canvas")) {
+                const call = JSON.parse(chunk.split("data: ")[1]);
+                calls.push({ sessionId: this.sessionId, ...call });
+                const body = { sessionId: this.sessionId, requestId: call.requestId, clientId: call.clientId, result: { projectId: "canvas-project", nodes: [], connections: [], selectedNodeIds: [] } };
+                const req = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), request(`${appPath}/host-tool-result`), { method: "POST" });
+                routes.get(`${appPath}/host-tool-result`)(req, response());
+            }
         },
         end() { this.emit("close"); },
     });
     return {
-        tool, handlers, activations,
+        tool, handlers, activations, calls,
         attach(sessionId, authorization) {
             const stream = response();
             stream.sessionId = sessionId;
@@ -72,15 +81,20 @@ test("opens only the caller's interface and waits for its restored canvas", asyn
     assert.equal(fixture.activations[0].url.searchParams.get("clientId"), "iframe-client");
 });
 
-test("does not execute the MCP call until the iframe is ready", async (t) => {
+test("routes the MCP call to the session iframe only after it is ready", async (t) => {
     const fixture = setup(t);
     const stream = fixture.attach("chat-a");
     let called = false;
-    const result = fixture.handlers.get("tools/execute")({ ...execution(), name: "mcp__infinite-canvas__canvas_generate_image" }, async () => { called = true; return "generated"; });
+    const result = fixture.handlers.get("tools/execute")({ ...execution(), name: "mcp__infinite-canvas__canvas_generate_image", arguments: { prompt: "绘制橘猫" } }, async () => { called = true; return "generated"; });
     await setImmediate();
     assert.equal(called, false);
     fixture.acknowledge(stream, "chat-a");
-    assert.equal(await result, "generated");
+    assert.equal((await result).isError, false);
+    assert.equal(called, false);
+    assert.deepEqual(fixture.calls.map(({ sessionId, clientId, name }) => ({ sessionId, clientId, name })), [
+        { sessionId: "chat-a", clientId: "iframe-client", name: "canvas_get_state" },
+        { sessionId: "chat-a", clientId: "iframe-client", name: "canvas_apply_ops" },
+    ]);
 });
 
 test("a stale iframe connection cannot dispatch a canvas tool", async (t) => {

@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
+import { buildCanvasToolRequest } from "@basketikun/canvas-agent/dist/canvas/operations.js";
+import { compactCanvasState, compactNode, parseToolInput } from "@basketikun/canvas-agent/dist/canvas/tools.js";
 
 export const appPath = "/plugins/dsh-infinite-canvas/app";
 
@@ -7,20 +10,25 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
     const pending = new Map();
     const preparing = new Map();
     const targets = new WeakMap();
+    const connections = new WeakMap();
     const defaultChanges = new WeakSet();
     const requestPage = (sessionId, stream, signal, kind, binding) => {
         signal.throwIfAborted();
         if (!clients.get(sessionId)?.has(stream)) throw new Error("DSH 当前聊天界面已断开");
         const requestId = randomUUID();
         return new Promise((resolve, reject) => {
+            let timer;
             const finish = (error, value) => {
                 pending.delete(requestId);
                 signal.removeEventListener("abort", abort);
+                clearTimeout(timer);
                 error ? reject(error) : resolve(value);
             };
             const abort = () => finish(signal.reason || new Error("画布连接已取消"));
             pending.set(requestId, { sessionId, stream, kind, binding, finish });
             signal.addEventListener("abort", abort, { once: true });
+            // Preserve Canvas Agent's existing tool-response deadline on this transport.
+            if (kind === "call-canvas") timer = setTimeout(() => finish(new Error("画布操作超时")), 30000);
             stream.write(`event: ${kind}\ndata: ${JSON.stringify({ requestId, ...binding })}\n\n`);
         });
     };
@@ -65,7 +73,7 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
         const { url, token } = await ensureAgent();
         signal.throwIfAborted();
         if (!clients.get(sessionId)?.has(stream)) throw new Error("DSH 当前聊天界面已断开");
-        const result = await requestPage(sessionId, stream, signal, "open-canvas", binding);
+        const result = await requestPage(sessionId, stream, signal, "open-canvas", { ...binding, show: saveDefault, clientId: connections.get(agent)?.clientId });
         signal.throwIfAborted();
         const response = await fetch(`${url}/canvas/activate?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(result.clientId)}`, { method: "POST", signal });
         if (!response.ok) throw new Error("画布连接已失效，请重新打开画布");
@@ -75,6 +83,7 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
             defaultChanges.delete(agent);
         }
         targets.set(agent, binding);
+        connections.set(agent, { stream, clientId: result.clientId });
         return { opened: true, connected: true, ...binding };
     };
     const prepare = (agent, signal, reselect = false, checkSidebar = false) => {
@@ -82,9 +91,9 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
         if (!preparing.has(sessionId)) preparing.set(sessionId, openCanvas(agent, signal, reselect, checkSidebar).finally(() => preparing.delete(sessionId)));
         return preparing.get(sessionId);
     };
-    const admit = (req, res) => {
-        if (req.method !== "GET") {
-            res.writeHead(405, { Allow: "GET" });
+    const admit = (req, res, method = "GET") => {
+        if (req.method !== method) {
+            res.writeHead(405, { Allow: method });
             res.end();
             return false;
         }
@@ -121,6 +130,36 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
             });
         },
     }));
+    ctx.effect(() => ctx.webServer.register({
+        kind: "exact", path: `${appPath}/host-tool-result`,
+        handler(req, res) {
+            if (!admit(req, res, "POST")) return;
+            void new Response(Readable.toWeb(req)).json().then((body) => {
+                const request = pending.get(body?.requestId);
+                if (!request || request.kind !== "call-canvas" || request.sessionId !== body.sessionId || request.binding.clientId !== body.clientId) {
+                    res.writeHead(409); res.end(); return;
+                }
+                request.finish(body.error ? new Error(String(body.error)) : null, body.result);
+                res.writeHead(204); res.end();
+            }).catch(() => { res.writeHead(400); res.end(); });
+        },
+    }));
+    const callCanvas = async (exec, name, rawInput) => {
+        const input = parseToolInput(name, rawInput);
+        const { stream, clientId } = connections.get(exec.agent) || {};
+        if (!stream || !clientId) throw new Error("当前会话的画布尚未连接");
+        const call = (name, input) => requestPage(exec.agent.session.id, stream, exec.signal, "call-canvas", { clientId, name, input });
+        if (!name.startsWith("canvas_") || name === "canvas_list_projects") return call(name, input);
+        const snapshot = await call("canvas_get_state", {});
+        if (snapshot?.projectId !== targets.get(exec.agent)?.projectId) throw new Error("会话画布已切换，请重新确认连接");
+        if (["canvas_get_state", "canvas_export_snapshot"].includes(name)) return compactCanvasState(snapshot);
+        if (name === "canvas_get_selection") {
+            const selected = new Set(snapshot.selectedNodeIds || []);
+            return { nodes: (snapshot.nodes || []).filter((node) => selected.has(node.id)).map(compactNode) };
+        }
+        const request = buildCanvasToolRequest(name, input, snapshot);
+        return call(request.name, request.input);
+    };
     ctx.effect(() => ctx.webServer.register({
         kind: "exact", path: `${appPath}/host-request`,
         handler(req, res) {
@@ -182,6 +221,9 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
             if (binding.mode === "canvas" && exec.name.endsWith("__workbench_image_generate")) {
                 throw new Error("本次操作位置是画布，请使用 canvas_generate_image 将图片生成到所选画布");
             }
+            const result = await callCanvas(exec, name, input);
+            const content = [{ type: "text", text: JSON.stringify(result, null, 2) }];
+            return { isError: false, value: { content }, content };
         }
         return next();
     });

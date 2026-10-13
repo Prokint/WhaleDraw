@@ -110,6 +110,10 @@ export function DshCanvasBridge() {
                 reportInspections();
                 return;
             }
+            if (event.data.type === "dsh-infinite-canvas:tool-call") {
+                void runTool(event.data, true);
+                return;
+            }
             if (event.data.type !== "dsh-infinite-canvas:prepare") return;
             if (event.data.requestId === lastRequestId) return;
             lastRequestId = event.data.requestId;
@@ -142,9 +146,12 @@ export function DshCanvasBridge() {
             stateTimer = setTimeout(publishState, 300);
         });
         window.parent.postMessage({ type: "dsh-infinite-canvas:bridge-mounted" }, window.location.origin);
-        const runTool = async (call: AgentPendingToolCall) => {
+        const runTool = async (call: AgentPendingToolCall, host = false) => {
             const bridge = config;
             if (!bridge) return;
+            const report = (body: { result?: unknown; error?: string }) => host
+                ? window.parent.postMessage({ type: "dsh-infinite-canvas:tool-result", requestId: call.requestId, clientId, ...body }, window.location.origin)
+                : postToolResult(bridge.url, bridge.token, clientId, { requestId: call.requestId, ...body });
             try {
                 let result: unknown;
                 if (prepareMode === "workbench" && ((call.name.startsWith("canvas_") && call.name !== "canvas_list_projects") || (call.name === "site_navigate" && /^\/(?:canvas)?(?:\/|$)/.test(call.input?.path || "/")))) {
@@ -172,9 +179,9 @@ export function DshCanvasBridge() {
                 } else {
                     throw new Error(`DSH 画布连接不支持 ${call.name}`);
                 }
-                await postToolResult(bridge.url, bridge.token, clientId, { requestId: call.requestId, result });
+                await report({ result });
             } catch (error) {
-                await postToolResult(bridge.url, bridge.token, clientId, { requestId: call.requestId, error: error instanceof Error ? error.message : String(error) });
+                await report({ error: error instanceof Error ? error.message : String(error) });
             }
         };
         void fetch(`${import.meta.env.BASE_URL}bridge-config`, { cache: "no-store" }).then(async (response) => {
