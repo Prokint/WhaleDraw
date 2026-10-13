@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [调整] README 增加 WhaleDraw 品牌封面、画布示例与安装文档导航。
+
 ## v0.2.0
 
 + [修复] 中英文 Render 部署入口指向 WhaleDraw 仓库。
