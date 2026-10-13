@@ -4,8 +4,7 @@ import { lstat, mkdir, readFile, readdir, readlink, realpath, rename } from "nod
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import { c as pack, t as list, x as extract } from "tar";
 
-const packageName = "dsh-whaledraw";
-const legacyPackageName = "dsh-infinite-canvas";
+const packageName = "dsh-infinite-canvas";
 
 async function streamHash(stream) {
     const hash = createHash("sha256");
@@ -41,10 +40,7 @@ async function archiveInventory(file) {
     await list({ file, strict: true, noResume: true, onReadEntry(entry) {
         const key = posix.normalize(entry.path).replace(/\/$/, "");
         if (key === ".") { entry.resume(); return; }
-        if (entry.type === "File" && entry.size === 0) {
-            files[key] = ["file", createHash("sha256").digest("hex")];
-            entry.resume();
-        } else if (entry.type === "File") {
+        if (entry.type === "File") {
             const check = streamHash(entry).then((hash) => { files[key] = ["file", hash]; });
             checks.push(check);
             void check.catch(() => {});
@@ -136,20 +132,17 @@ export async function installVerifiedBundle(manager, file, version, directory) {
         intercepted = true;
         return change.call(this, async (result) => {
             await assertNoInterruptedUpdate(join(profile, ".plugin-manager", "downloads"));
-            const legacyTarget = join(modules, legacyPackageName);
-            if (await exists(target) && await exists(legacyTarget)) throw new Error("新旧插件同时存在，请先退出 DSH 并检查安装状态，尚未执行安装。");
-            const previousTarget = await exists(target) ? target : legacyTarget;
-            const original = await exists(previousTarget);
+            const original = await exists(target);
             if (!original || (!original.isDirectory() && !original.isSymbolicLink())) throw new Error("旧插件目录异常，已停止更新。");
             const moduleStat = await lstat(modules);
             if (!moduleStat.isDirectory() || moduleStat.isSymbolicLink()) throw new Error("DSH 依赖目录是外部链接，已停止更新。");
-            const source = await realpath(previousTarget);
+            const source = await realpath(target);
             if (source === directory || inside(source, directory)) throw new Error("备份目录位于源码内，已停止更新。");
             const externalSource = original.isSymbolicLink() && !inside(modules, source);
             const before = await inventory(modules);
             const sourceBefore = externalSource ? await inventory(source) : null;
             const dependencyArchive = join(directory, "dependencies-backup.tgz");
-            await pack({ file: dependencyArchive, cwd: modules, gzip: true, follow: false, strict: true, sync: true }, ["."]);
+            await pack({ file: dependencyArchive, cwd: modules, gzip: true, follow: false, strict: true }, ["."]);
             if (await archiveInventory(dependencyArchive) !== before || await inventory(modules) !== before) throw new Error("旧依赖归档复查不一致，已停止更新。");
             const dependencyArchiveSHA = await streamHash(createReadStream(dependencyArchive));
             const files = await this.readRestoredFiles();
@@ -165,7 +158,7 @@ export async function installVerifiedBundle(manager, file, version, directory) {
             }, null, 2)]]));
             if (externalSource) {
                 const copy = join(directory, "source-backup.tgz");
-                await pack({ file: copy, cwd: source, gzip: true, follow: false, strict: true, sync: true }, ["."]);
+                await pack({ file: copy, cwd: source, gzip: true, follow: false, strict: true }, ["."]);
                 if (await archiveInventory(copy) !== sourceBefore || await inventory(source) !== sourceBefore) throw new Error("源码备份复查不一致，已停止更新。");
                 sourceArchiveSHA = await streamHash(createReadStream(copy));
             }
@@ -175,14 +168,7 @@ export async function installVerifiedBundle(manager, file, version, directory) {
             catch (error) { throw new Error(`无法保留旧依赖目录，可能被运行任务占用；尚未执行安装。${error.message}`); }
             try {
                 await saveJournal("installing");
-                if (previousTarget === legacyTarget) {
-                    const manifestPath = join(profile, "package.json");
-                    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-                    delete manifest.dependencies[legacyPackageName];
-                    manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter((name) => name !== legacyPackageName);
-                    await this.restoreFiles(new Map([[manifestPath, JSON.stringify(manifest, null, 2) + "\n"]]));
-                }
-                const application = await operation(result) ?? result.application;
+                const application = await operation(result);
                 if (!["applied", "restart-required"].includes(application) || result.bundle !== packageName) throw new Error("DSH 未确认安装成功。");
                 const installed = await exists(target);
                 if (!installed || !inside(modules, await realpath(target))) throw new Error("新插件安装目录异常。");

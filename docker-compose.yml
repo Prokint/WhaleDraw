@@ -1,7 +1,7 @@
 services:
   app:
-    image: ghcr.io/prokint/whaledraw:latest
-    container_name: whaledraw
+    image: ghcr.io/basketikun/infinite-canvas:latest
+    container_name: infinite-canvas
     ports:
       - "3000:3000"
     restart: unless-stopped

@@ -39,7 +39,7 @@ export function DshCanvasBridge() {
         let choosingProject = false;
         const reportPrepare = (result: { clientId?: string; projectId?: string; error?: string }) => {
             if (!prepareRequestId || disposed) return;
-            window.parent.postMessage({ type: "dsh-whaledraw:prepared", requestId: prepareRequestId, ...result }, window.location.origin);
+            window.parent.postMessage({ type: "dsh-infinite-canvas:prepared", requestId: prepareRequestId, ...result }, window.location.origin);
             prepareRequestId = "";
         };
         const completePrepare = async () => {
@@ -64,7 +64,7 @@ export function DshCanvasBridge() {
             const snapshot = useAgentStore.getState().canvasContext?.snapshot;
             if (project && snapshot?.projectId !== id) return;
             for (const [requestId, defaultProjectId] of inspections) {
-                window.parent.postMessage({ type: "dsh-whaledraw:inspected", requestId,
+                window.parent.postMessage({ type: "dsh-infinite-canvas:inspected", requestId,
                     mode: project ? "canvas" : route.current === "/image" ? "workbench" : "none",
                     projectId: project?.id, title: snapshot?.projectId === id ? snapshot.title : project?.title,
                     defaultTitle: store.projects.find((project) => project.id === defaultProjectId)?.title,
@@ -105,12 +105,12 @@ export function DshCanvasBridge() {
         routeChanged.current = prepareProject;
         const onPrepare = (event: MessageEvent) => {
             if (event.origin !== window.location.origin || event.source !== window.parent || typeof event.data?.requestId !== "string") return;
-            if (event.data.type === "dsh-whaledraw:inspect") {
+            if (event.data.type === "dsh-infinite-canvas:inspect") {
                 inspections.set(event.data.requestId, typeof event.data.defaultProjectId === "string" ? event.data.defaultProjectId : "");
                 reportInspections();
                 return;
             }
-            if (event.data.type !== "dsh-whaledraw:prepare") return;
+            if (event.data.type !== "dsh-infinite-canvas:prepare") return;
             if (event.data.requestId === lastRequestId) return;
             lastRequestId = event.data.requestId;
             prepareRequestId = event.data.requestId;
@@ -128,7 +128,7 @@ export function DshCanvasBridge() {
             else reportPrepare({ error: "画布连接方式无效" });
         };
         window.addEventListener("message", onPrepare);
-        const notifyFocus = () => window.parent.postMessage({ type: "dsh-whaledraw:focused" }, window.location.origin);
+        const notifyFocus = () => window.parent.postMessage({ type: "dsh-infinite-canvas:focused" }, window.location.origin);
         window.addEventListener("pointerdown", notifyFocus);
         window.addEventListener("focus", notifyFocus);
         const unsubscribeCanvas = useCanvasStore.subscribe(prepareProject);
@@ -141,7 +141,7 @@ export function DshCanvasBridge() {
             if (stateTimer) clearTimeout(stateTimer);
             stateTimer = setTimeout(publishState, 300);
         });
-        window.parent.postMessage({ type: "dsh-whaledraw:bridge-mounted" }, window.location.origin);
+        window.parent.postMessage({ type: "dsh-infinite-canvas:bridge-mounted" }, window.location.origin);
         const runTool = async (call: AgentPendingToolCall) => {
             const bridge = config;
             if (!bridge) return;

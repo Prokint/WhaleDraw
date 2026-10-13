@@ -10,7 +10,7 @@ process.chdir(fileURLToPath(webRoot));
 
 await build({
     root: fileURLToPath(webRoot),
-    base: "/plugins/dsh-whaledraw/app/",
+    base: "/plugins/dsh-infinite-canvas/app/",
     build: {
         outDir: fileURLToPath(new URL("../dist/app/", import.meta.url)),
         emptyOutDir: true,

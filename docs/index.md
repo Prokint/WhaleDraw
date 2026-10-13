@@ -15,7 +15,7 @@
 
 ## Development and Data
 
-- [DeepSeek Harness 插件构建与安装](../plugins/dsh-whaledraw/README.md)
+- [DeepSeek Harness 插件构建与安装](../plugins/dsh-infinite-canvas/README.md)
 - [本分支更新与上游同步](/docs/development/upstream-sync)
 
 

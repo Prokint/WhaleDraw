@@ -14,6 +14,6 @@ export const useThemeStore = create<ThemeStore>()(
             theme: "dark",
             setTheme: (theme) => set({ theme }),
         }),
-        { name: "whaledraw:theme_store" },
+        { name: "infinite-canvas:theme_store" },
     ),
 );

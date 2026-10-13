@@ -76,7 +76,7 @@ test("does not execute the MCP call until the iframe is ready", async (t) => {
     const fixture = setup(t);
     const stream = fixture.attach("chat-a");
     let called = false;
-    const result = fixture.handlers.get("tools/execute")({ ...execution(), name: "mcp__whaledraw__canvas_generate_image" }, async () => { called = true; return "generated"; });
+    const result = fixture.handlers.get("tools/execute")({ ...execution(), name: "mcp__infinite-canvas__canvas_generate_image" }, async () => { called = true; return "generated"; });
     await setImmediate();
     assert.equal(called, false);
     fixture.acknowledge(stream, "chat-a");
@@ -88,7 +88,7 @@ test("a stale iframe connection cannot dispatch a canvas tool", async (t) => {
     const stream = fixture.attach("chat-a");
     globalThis.fetch = async () => ({ ok: false });
     let called = false;
-    const rejected = assert.rejects(fixture.handlers.get("tools/execute")({ ...execution(), name: "mcp__whaledraw__canvas_get_state" }, async () => { called = true; }), /连接已失效/);
+    const rejected = assert.rejects(fixture.handlers.get("tools/execute")({ ...execution(), name: "mcp__infinite-canvas__canvas_get_state" }, async () => { called = true; }), /连接已失效/);
     await setImmediate();
     fixture.acknowledge(stream, "chat-a");
     await rejected;

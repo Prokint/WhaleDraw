@@ -10,7 +10,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/prokint/whaledraw
+  IMAGE_NAME: ghcr.io/prokint/infinite-canvas-dsh
 
 jobs:
   meta:

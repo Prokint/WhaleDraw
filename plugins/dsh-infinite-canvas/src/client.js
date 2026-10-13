@@ -1,10 +1,10 @@
 window.__ModuleLoader__.load({
-    id: "dsh-whaledraw",
+    id: "dsh-infinite-canvas",
     factory: (require) => {
         const { createElement: h, useEffect, useRef } = require("react");
-        const panelId = "whaledraw";
-        const workbenchId = "whaledraw-image";
-        const appPath = "/plugins/dsh-whaledraw/app";
+        const panelId = "infinite-canvas";
+        const workbenchId = "infinite-canvas-image";
+        const appPath = "/plugins/dsh-infinite-canvas/app";
         const canvasRoutes = new Map();
         const sidebarFrames = new Map();
         let focusedFrame;
@@ -24,7 +24,7 @@ window.__ModuleLoader__.load({
                 void fetch(`${appPath}/host-request?${new URLSearchParams({ sessionId, requestId })}`, { cache: "no-store" })
                     .then((response) => response.ok ? response.json() : null)
                     .then((request) => {
-                        if (request && currentRequest.current === requestId) frame.current?.contentWindow.postMessage({ type: "dsh-whaledraw:prepare", ...request }, window.location.origin);
+                        if (request && currentRequest.current === requestId) frame.current?.contentWindow.postMessage({ type: "dsh-infinite-canvas:prepare", ...request }, window.location.origin);
                     })
                     .catch((error) => { void reportOpen(sessionId, { requestId, error: error.message }); });
             };
@@ -34,7 +34,7 @@ window.__ModuleLoader__.load({
                 const element = frame.current;
                 sidebarFrames.set(element, { sessionId, visibility, inspect(request) {
                     inspections.current.set(request.requestId, request);
-                    element.contentWindow.postMessage({ type: "dsh-whaledraw:inspect", ...request }, window.location.origin);
+                    element.contentWindow.postMessage({ type: "dsh-infinite-canvas:inspect", ...request }, window.location.origin);
                 } });
                 return () => {
                     sidebarFrames.delete(element);
@@ -46,26 +46,26 @@ window.__ModuleLoader__.load({
             useEffect(() => {
                 const onMessage = (event) => {
                     if (event.origin !== window.location.origin || event.source !== frame.current?.contentWindow) return;
-                    if (event.data?.type === "dsh-whaledraw:focused") { focusedFrame = frame.current; return; }
-                    if (event.data?.type === "dsh-whaledraw:bridge-mounted") {
+                    if (event.data?.type === "dsh-infinite-canvas:focused") { focusedFrame = frame.current; return; }
+                    if (event.data?.type === "dsh-infinite-canvas:bridge-mounted") {
                         prepare();
-                        for (const request of inspections.current.values()) frame.current.contentWindow.postMessage({ type: "dsh-whaledraw:inspect", ...request }, window.location.origin);
+                        for (const request of inspections.current.values()) frame.current.contentWindow.postMessage({ type: "dsh-infinite-canvas:inspect", ...request }, window.location.origin);
                         return;
                     }
-                    if (event.data?.type === "dsh-whaledraw:inspected") {
+                    if (event.data?.type === "dsh-infinite-canvas:inspected") {
                         const { requestId, mode, projectId, title, defaultTitle } = event.data;
                         if (!inspections.current.delete(requestId)) return;
                         void reportOpen(sessionId, { requestId, mode: visibility.current ? mode : "none", ...(projectId ? { projectId } : {}), title: title || "", defaultTitle: defaultTitle || "" });
                         return;
                     }
-                    if (event.data?.type === "dsh-whaledraw:prepared") {
+                    if (event.data?.type === "dsh-infinite-canvas:prepared") {
                         if (requestId && event.data.requestId === requestId) {
                             const { clientId, projectId, error } = event.data;
                             void reportOpen(sessionId, { requestId, ...(error ? { error } : { clientId, ...(projectId ? { projectId } : {}) }) });
                         }
                         return;
                     }
-                    if (event.data?.type !== "dsh-whaledraw:open-chat") return;
+                    if (event.data?.type !== "dsh-infinite-canvas:open-chat") return;
                     const location = frame.current.contentWindow.location;
                     const currentSessionId = sessionId || hostContext.sidebarRight.mounted.getSnapshot();
                     if (location.pathname.startsWith(`${appPath}/`)) canvasRoutes.set(currentSessionId, `${location.pathname.slice(appPath.length)}${location.search}`);

@@ -1,4 +1,4 @@
-const appPath = "/plugins/dsh-whaledraw/app";
+const appPath = "/plugins/dsh-infinite-canvas/app";
 
 export type PluginUpdateInfo = {
     version: string;

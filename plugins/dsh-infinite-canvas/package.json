@@ -1,5 +1,5 @@
 {
-  "name": "dsh-whaledraw",
+  "name": "dsh-infinite-canvas",
   "version": "0.1.4",
   "description": "在 DeepSeek Harness 中使用 WhaleDraw 无限画布创作工作台",
   "type": "module",

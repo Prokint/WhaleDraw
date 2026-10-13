@@ -9,7 +9,7 @@ import { appPath } from "./canvas-launcher.mjs";
 import { installVerifiedBundle } from "./verified-install.mjs";
 
 const repository = "Prokint/WhaleDraw";
-const packageName = "dsh-whaledraw";
+const packageName = "dsh-infinite-canvas";
 
 export function installPluginUpdater(ctx) {
     const token = randomUUID();
