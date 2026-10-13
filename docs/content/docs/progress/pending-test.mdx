@@ -5,6 +5,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- Render 部署入口：中英文文档中的部署按钮已指向 `Prokint/WhaleDraw`，需确认 Render 初始化时选择的是本仓库；本次仅修改链接，未执行真实云部署。
+
 - 更新归档停滞修复：本次 3180 手动安装在旧依赖异步 tar 归档处未完成，退出时提示 unsettled top-level await，旧插件及配置尚未替换；脱离宿主的只读脚本对实际依赖树重现。备份改用 tar 同步归档后，真实安装完成并通过旧依赖、配置和安装文件复查；归档期间会短暂阻塞当前安装进程。Windows Web Node 24.21.0 + DSH 0.2.0-rc.2 + pnpm 11.7 的 14 项独立副本测试通过（新增大文件、多目录硬链接与空文件样本）；小型样本修复前也可通过，真实依赖树复现才是停滞修复的证据。pnpm 11.25 的相同测试 12 通过、2 失败：源码 link 转正式包及服务代理场景被安装目录复查拦截并回滚，另列 todo；真实 3180 包转包安装使用 pnpm 11.25 并成功。连续安装时曾被运行中 Web 服务占用目录的 EPERM 拦截，未替换旧依赖；退出 3180 开发服务后安装成功并重新启动，最终包的 24 个文件与预解包清单和 SHA-256 一致。未验收通过新 Release 的页面自动升级或正式桌面端，不能据此推断旧已发布客户端已获得修复。
 
 - WhaleDraw 品牌统一：GitHub 仓库已改为 `Prokint/WhaleDraw`，应用标题、DSH 侧栏与右侧开始页入口、提示文案和项目文档使用 WhaleDraw；版本与安装包来源改为新仓库，发布附件及更新器匹配 `whaledraw-<版本>.tgz`；包内身份继续为 `dsh-infinite-canvas`。插件包名 `dsh-infinite-canvas`、MCP `infinite-canvas`、工具、页面路径、浏览器数据库、配置键及会话存储保持现有标识，上游作者、依赖及协议保留原名，不执行数据迁移。检查各语言标题与导航、输入 WhaleDraw 时自动打开连接、原画布/素材/历史/会话绑定及更新信息读取，并在独立 profile 验收新文件名的附件下载、校验及原插件升级识别。本机生产构建与打包成功，开发包 `whaledraw-0.1.4.tgz` 已安装到 3180 Web profile，24 个安装文件复查通过，恢复记录为 installed；原生安装确认 bundle 仍为 `dsh-infinite-canvas`。真实 Chrome 页面已显示 WhaleDraw 侧栏和我的画布；两项已有画布仍在，其中含 52 节点的画布可打开并显示 DSH 已连接，页面及 JS/CSS/config/version 资源均返回 200。正式桌面端未替换，已发布 v0.1.4 仍不含改名源码；Agent 名称触发、右侧开始页及实际模型生成、新 Release 页面升级仍需验收。旧客户端首次切换新文件名及新仓库附件 URL 的安装步骤见插件 README。
