@@ -142,7 +142,7 @@ export async function installVerifiedBundle(manager, file, version, directory) {
             const before = await inventory(modules);
             const sourceBefore = externalSource ? await inventory(source) : null;
             const dependencyArchive = join(directory, "dependencies-backup.tgz");
-            await pack({ file: dependencyArchive, cwd: modules, gzip: true, follow: false, strict: true }, ["."]);
+            await pack({ file: dependencyArchive, cwd: modules, gzip: true, follow: false, strict: true, sync: true }, ["."]);
             if (await archiveInventory(dependencyArchive) !== before || await inventory(modules) !== before) throw new Error("旧依赖归档复查不一致，已停止更新。");
             const dependencyArchiveSHA = await streamHash(createReadStream(dependencyArchive));
             const files = await this.readRestoredFiles();
@@ -158,7 +158,7 @@ export async function installVerifiedBundle(manager, file, version, directory) {
             }, null, 2)]]));
             if (externalSource) {
                 const copy = join(directory, "source-backup.tgz");
-                await pack({ file: copy, cwd: source, gzip: true, follow: false, strict: true }, ["."]);
+                await pack({ file: copy, cwd: source, gzip: true, follow: false, strict: true, sync: true }, ["."]);
                 if (await archiveInventory(copy) !== sourceBefore || await inventory(source) !== sourceBefore) throw new Error("源码备份复查不一致，已停止更新。");
                 sourceArchiveSHA = await streamHash(createReadStream(copy));
             }
