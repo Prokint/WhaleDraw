@@ -10,6 +10,7 @@ import { installVerifiedBundle } from "./verified-install.mjs";
 
 const repository = "Prokint/WhaleDraw";
 const packageName = "dsh-infinite-canvas";
+const releasePackageName = "whaledraw";
 
 export function installPluginUpdater(ctx) {
     const token = randomUUID();
@@ -33,7 +34,7 @@ export function installPluginUpdater(ctx) {
         if (response.status === 404) return { version, available: false, reason: "该版本尚未发布可安装的 Release。" };
         if (!response.ok) throw new Error("无法读取 Release，请检查网络后重试。");
         const release = await response.json();
-        const name = `${packageName}-${version}.tgz`;
+        const name = `${releasePackageName}-${version}.tgz`;
         const url = `https://github.com/${repository}/releases/download/${tag}/${name}`;
         const asset = release.assets?.find((item) => item.name === name && item.state === "uploaded" && item.browser_download_url === url);
         const available = release.tag_name === tag && !release.draft && !release.prerelease && Boolean(asset);
@@ -71,7 +72,7 @@ export function installPluginUpdater(ctx) {
                 const root = join(manager.profile.dir, ".plugin-manager", "downloads");
                 await mkdir(root, { recursive: true });
                 const directory = await mkdtemp(join(root, `${packageName}-`));
-                const file = join(directory, `${packageName}-${info.version}.tgz`);
+                const file = join(directory, `${releasePackageName}-${info.version}.tgz`);
                 let installStarted = false;
                 try {
                     try {

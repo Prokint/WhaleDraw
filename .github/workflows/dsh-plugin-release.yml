@@ -50,4 +50,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${RELEASE_TAG#v}"
-          gh release upload "$RELEASE_TAG" "plugins/dsh-infinite-canvas/dist/dsh-infinite-canvas-$version.tgz"
+          mv "plugins/dsh-infinite-canvas/dist/dsh-infinite-canvas-$version.tgz" "plugins/dsh-infinite-canvas/dist/whaledraw-$version.tgz"
+          gh release upload "$RELEASE_TAG" "plugins/dsh-infinite-canvas/dist/whaledraw-$version.tgz"

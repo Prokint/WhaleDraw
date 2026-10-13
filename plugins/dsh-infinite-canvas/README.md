@@ -22,9 +22,11 @@ dsh plugin --profile desktop add "link:<插件目录的绝对路径>"
 ```powershell
 node scripts/build.mjs
 pnpm --config.ignore-scripts=true pack --pack-destination dist
+$version = (Get-Content ../../VERSION -Raw).Trim().TrimStart('v')
+Move-Item -LiteralPath "dist/dsh-infinite-canvas-$version.tgz" -Destination "dist/whaledraw-$version.tgz"
 ```
 
-构建会先从根目录 `VERSION` 同步包版本，再打包为 `dist/dsh-infinite-canvas-<版本号>.tgz`。应用与 DSH 安装包使用同一个版本号；第三方 Canvas Agent 依赖仍按自己的版本安装。也可以在完成构建后执行 `npm pack`，由 `prepack` 重新构建。接收方执行：
+构建会先从根目录 `VERSION` 同步包版本，pnpm 按内部包名生成压缩包后，仅将文件名改为 `dist/whaledraw-<版本号>.tgz`；Release 工作流执行相同改名。应用与 DSH 安装包使用同一个版本号；第三方 Canvas Agent 依赖仍按自己的版本安装。也可以在完成构建后执行 `npm pack --pack-destination dist`，由 `prepack` 重新构建，再按上面的命令改名。接收方执行：
 
 ```powershell
 dsh plugin --profile desktop add "file:<安装包的绝对路径>"
@@ -38,7 +40,7 @@ dsh plugin --profile desktop add "file:<安装包的绝对路径>"
 
 仓库和界面名称为 WhaleDraw；插件包名仍为 `dsh-infinite-canvas`，MCP 服务仍为 `infinite-canvas`，工具仍为 `infinite_canvas_open`，页面仍在 `/plugins/dsh-infinite-canvas/app`。浏览器数据库、配置键、DSH 会话存储与导入导出格式保持原标识，沿用同一浏览器来源内已有数据，无需迁移。上游项目名、作者署名、第三方依赖和协议保持原名。
 
-更新来源改为 `Prokint/WhaleDraw`；历史 tag、Release、PR 和安装包不重写。已发布的 v0.1.4 及更早客户端仍匹配旧仓库的附件 URL，GitHub 地址跳转不能代替这项校验。包含本次改动的新正式包发布后，旧客户端首次切换需备份并手动安装，再重启加载新更新器；源码 `link:` 安装先更新源码、按开发流程构建并重启，不直接用 CLI 替换链接目标。安装安全要求仍遵循下方首次升级说明。当前改名源码尚未发布为正式包。
+更新来源改为 `Prokint/WhaleDraw`；新发布附件命名为 `whaledraw-<版本号>.tgz`，包内 `package.json` 的名称保持 `dsh-infinite-canvas`，安装器继续识别为同一个插件。历史 tag、Release、PR 和安装包不重写。已发布的 v0.1.4 及更早客户端仍匹配旧文件名及旧仓库的附件 URL，GitHub 地址跳转不能代替这项校验。包含本次改动的新正式包发布后，旧客户端首次切换需备份并手动安装，再重启加载新更新器；源码 `link:` 安装先更新源码、按开发流程构建并重启，不直接用 CLI 替换链接目标。安装安全要求仍遵循下方首次升级说明。当前改名源码尚未发布为正式包。
 
 - 版本检查与在线更新日志读取公开的 `Prokint/WhaleDraw` 仓库；失败时保留安装包自带的日志，不显示为已确认最新。版本弹窗的「立即更新」仅在 DSH 内、存在新版本且 Release 安装包就绪时可点击；确认后插件先下载官方附件到当前 profile 的 `.plugin-manager/downloads/`，校验 Release 的 SHA-256，再交给 DSH 原生插件管理器从本地安装。安装器已尝试使用的包会保留，供 profile 后续重装依赖；未通过下载或校验的文件会清理。代码同步和冲突处理在本仓库完成，单独检查更新不会安装或替换代码。
 - 插件升级安装成功后显示「已安装，待重启」，由用户手动重启 DSH 使新版本生效。更新在 DSH 原生配置写锁内保留整个旧 `node_modules` 和 profile 配置，再让 pnpm 在空目录安装；源码链接只随旧目录移动，源码目标不参与删除。安装后逐文件对照官方包的 SHA-256 和文件清单，检查旧依赖与源码完整性，失败则保留失败目录并恢复旧依赖与配置。源码链接也可以更新，不再通过禁用更新规避问题。安装包缺失、网络失败或宿主拒绝安装会显示原因；不会改用任意第三方地址、低版本或未发布版本。
