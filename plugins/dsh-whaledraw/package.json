@@ -1,7 +1,7 @@
 {
-  "name": "dsh-infinite-canvas",
+  "name": "dsh-whaledraw",
   "version": "0.1.4",
-  "description": "在 DeepSeek Harness 中使用 Infinite Canvas 无限画布创作工作台",
+  "description": "在 DeepSeek Harness 中使用 WhaleDraw 无限画布创作工作台",
   "type": "module",
   "license": "MIT",
   "main": "src/index.mjs",

@@ -10,7 +10,7 @@ process.chdir(fileURLToPath(webRoot));
 
 await build({
     root: fileURLToPath(webRoot),
-    base: "/plugins/dsh-infinite-canvas/app/",
+    base: "/plugins/dsh-whaledraw/app/",
     build: {
         outDir: fileURLToPath(new URL("../dist/app/", import.meta.url)),
         emptyOutDir: true,
@@ -18,4 +18,4 @@ await build({
 });
 await writeFile(new URL("../dist/app/version.json", import.meta.url), JSON.stringify({ version: (await readFile(new URL("../../../VERSION", import.meta.url), "utf8")).trim() }));
 await copyFile(new URL("../../../LICENSE", import.meta.url), new URL("../LICENSE", import.meta.url));
-console.log("DSH 无限画布插件已打包，可使用 dsh plugin --profile desktop add link:<插件目录> 安装。");
+console.log("WhaleDraw DSH 插件已打包，可使用 dsh plugin --profile desktop add link:<插件目录> 安装。");

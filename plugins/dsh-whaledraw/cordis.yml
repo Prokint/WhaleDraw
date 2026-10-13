@@ -1,0 +1,14 @@
+- insert:
+    - id: dsh-whaledraw
+      name: dsh-whaledraw
+    - id: dsh-whaledraw-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: whaledraw
+        transport: stdio
+        command: !!js process.execPath
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+        args:
+          - !!js process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-whaledraw/agent')
+          - mcp

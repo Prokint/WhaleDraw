@@ -1,6 +1,6 @@
 import i18n from "@/i18n";
 
-export const RELEASE_REPOSITORY = "Prokint/infinite-canvas-dsh";
+export const RELEASE_REPOSITORY = "Prokint/WhaleDraw";
 
 export async function fetchReleaseInfo(includeChangelog = false): Promise<{ version: string; changelog?: string }> {
     const read = async (path: string) => {

@@ -32,7 +32,7 @@ const stores = new Map<string, LocalForage>();
 export function createPluginStorage(pluginId: string): PluginStorage {
     let store = stores.get(pluginId);
     if (!store) {
-        store = localforage.createInstance({ name: "infinite-canvas-plugins", storeName: pluginId });
+        store = localforage.createInstance({ name: "whaledraw-plugins", storeName: pluginId });
         stores.set(pluginId, store);
     }
     return {

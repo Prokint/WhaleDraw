@@ -2,19 +2,19 @@ import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import sirv from "sirv";
-import { z } from "zod";
 import { loadConfig } from "@basketikun/canvas-agent/dist/config.js";
 import { appPath, installCanvasLauncher } from "./canvas-launcher.mjs";
 import { installPluginUpdater } from "./plugin-update.mjs";
+import { openBindings } from "./rename-bindings.mjs";
 
-export const name = "dsh-infinite-canvas";
+export const name = "dsh-whaledraw";
 export const inject = ["webServer", "connection", "tools", "systemPrompt", "userQuestions", "storageDomain"];
 
 const appDirectory = fileURLToPath(new URL("../dist/app/", import.meta.url));
 
 export async function apply(ctx) {
     if (!existsSync(new URL("../dist/app/index.html", import.meta.url))) {
-        throw new Error("无限画布尚未打包，请先在 plugins/dsh-infinite-canvas 中运行 node scripts/build.mjs。");
+        throw new Error("WhaleDraw 尚未打包，请先在 plugins/dsh-whaledraw 中运行 node scripts/build.mjs。");
     }
     let child;
     let disposed = false;
@@ -38,14 +38,7 @@ export async function apply(ctx) {
         });
     };
     const ensureReady = () => agentReady ||= ensureAgent().then(() => loadConfig()).finally(() => { agentReady = undefined; });
-    const domain = await ctx.storageDomain.open({
-        name: "dsh_infinite_canvas", version: 1,
-        tables: { sessions: { valueSchema: z.discriminatedUnion("mode", [
-            z.object({ mode: z.literal("canvas"), projectId: z.string().min(1) }).strict(),
-            z.object({ mode: z.literal("workbench") }).strict(),
-        ]) } },
-    });
-    ctx.effect(() => () => domain.close());
+    const domain = await openBindings(ctx);
     installCanvasLauncher(ctx, ensureReady, domain.table("sessions"));
     installPluginUpdater(ctx);
     ctx.effect(() => () => { disposed = true; child?.kill(); });

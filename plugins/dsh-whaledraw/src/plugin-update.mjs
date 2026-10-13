@@ -8,8 +8,8 @@ import { gt, valid } from "semver";
 import { appPath } from "./canvas-launcher.mjs";
 import { installVerifiedBundle } from "./verified-install.mjs";
 
-const repository = "Prokint/infinite-canvas-dsh";
-const packageName = "dsh-infinite-canvas";
+const repository = "Prokint/WhaleDraw";
+const packageName = "dsh-whaledraw";
 
 export function installPluginUpdater(ctx) {
     const token = randomUUID();

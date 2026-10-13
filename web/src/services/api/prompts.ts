@@ -46,7 +46,7 @@ type SourceCache = PromptSourceStatus & {
 };
 
 const cacheTtlMs = 1000 * 60 * 60;
-const promptCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "prompt_cache" });
+const promptCacheStore = localforage.createInstance({ name: "whaledraw", storeName: "prompt_cache" });
 const loadingSources = new Map<string, Promise<PromptSourceRefreshResult>>();
 
 function enabledSources() {

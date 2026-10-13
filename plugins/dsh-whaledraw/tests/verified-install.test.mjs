@@ -9,7 +9,7 @@ import test from "node:test";
 import { c as pack } from "tar";
 import { installVerifiedBundle } from "../src/verified-install.mjs";
 
-const name = "dsh-infinite-canvas";
+const name = "dsh-whaledraw";
 const native = process.env.DSH_MANAGER_MODULE;
 const pnpm = process.env.DSH_TEST_PNPM;
 const node = process.env.DSH_TEST_NODE || process.execPath;

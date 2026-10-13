@@ -1,9 +1,9 @@
 export const APP_VERSION = __APP_VERSION__ || "dev";
 
-export const IS_DSH_PLUGIN = import.meta.env.BASE_URL.startsWith("/plugins/dsh-infinite-canvas/app/");
+export const IS_DSH_PLUGIN = import.meta.env.BASE_URL.startsWith("/plugins/dsh-whaledraw/app/");
 
 export function openDshChat() {
-    window.parent.postMessage({ type: "dsh-infinite-canvas:open-chat" }, window.location.origin);
+    window.parent.postMessage({ type: "dsh-whaledraw:open-chat" }, window.location.origin);
 }
 
 export const DOCS_URL = import.meta.env.VITE_DOC_URL || "https://docs.canvas.best";

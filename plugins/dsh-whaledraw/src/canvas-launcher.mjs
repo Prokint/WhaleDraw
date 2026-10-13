@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-export const appPath = "/plugins/dsh-infinite-canvas/app";
+export const appPath = "/plugins/dsh-whaledraw/app";
 
 export function installCanvasLauncher(ctx, ensureAgent, bindings) {
     const clients = new Map();
@@ -159,7 +159,7 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
         },
     }));
     ctx.effect(() => ctx.tools.register({
-        name: "infinite_canvas_open",
+        name: "whaledraw_open",
         description: "检查会话默认位置与侧边栏画布，询问本次生图位置并打开连接。临时选择不会改变默认绑定；只有用户明确要求更改连接时传 reselect=true。",
         parameters: { type: "object", properties: { reselect: { type: "boolean", description: "重新询问当前会话的画布连接方式" } }, additionalProperties: false },
         output: {
@@ -169,15 +169,15 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
         execute: (args, exec) => prepare(exec.agent, exec.signal, args.reselect === true, true),
     }));
     ctx.on("tools/execute", async (exec, next) => {
-        if (exec.name.startsWith("mcp__infinite-canvas__")) {
-            const name = exec.name.slice("mcp__infinite-canvas__".length);
+        if (exec.name.startsWith("mcp__whaledraw__")) {
+            const name = exec.name.slice("mcp__whaledraw__".length);
             const input = exec.arguments || {};
             const generates = ["canvas_generate_image", "canvas_run_generation", "workbench_image_generate"].includes(name)
                 || (name === "canvas_apply_ops" && input.ops?.some((op) => op.type === "run_generation"))
                 || (input.autoRun === true && ["canvas_create_config_node", "canvas_create_image_prompt_flow", "canvas_create_generation_flow"].includes(name));
             const binding = await prepare(exec.agent, exec.signal, false, generates || (name.startsWith("canvas_") && name !== "canvas_list_projects") || name === "workbench_image_get_config");
             if (binding.mode === "workbench" && exec.name.includes("__canvas_") && !exec.name.endsWith("__canvas_list_projects")) {
-                throw new Error("本次操作位置是生图工作台，请使用 workbench_image_get_config / workbench_image_generate；可调用 infinite_canvas_open 重新确认位置");
+                throw new Error("本次操作位置是生图工作台，请使用 workbench_image_get_config / workbench_image_generate；可调用 whaledraw_open 重新确认位置");
             }
             if (binding.mode === "canvas" && exec.name.endsWith("__workbench_image_generate")) {
                 throw new Error("本次操作位置是画布，请使用 canvas_generate_image 将图片生成到所选画布");
@@ -193,25 +193,25 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
             targets.delete(payload.agent);
             defaultChanges.delete(payload.agent);
         }
-        if (/画布|生图|出图|绘图|(?:生成|绘制|制作|编辑|修改).*(?:图|照片|海报|封面)|画(?:一|张|个)|\b(?:canvas|draw|text-to-image|generate\s+(?:an?\s+)?image)\b/is.test(text)) {
-            const reselect = /(?:更改|更换|修改|切换|重新选择|重新设置|设为|设置).*(?:连接|绑定|默认)|(?:连接|绑定|默认画布).*(?:更改|更换|修改|切换|重新选择)|infinite_canvas_open.*reselect["']?\s*:\s*true/.test(text);
+        if (/画布|生图|出图|绘图|(?:生成|绘制|制作|编辑|修改).*(?:图|照片|海报|封面)|画(?:一|张|个)|\b(?:whaledraw|canvas|draw|text-to-image|generate\s+(?:an?\s+)?image)\b/is.test(text)) {
+            const reselect = /(?:更改|更换|修改|切换|重新选择|重新设置|设为|设置).*(?:连接|绑定|默认)|(?:连接|绑定|默认画布).*(?:更改|更换|修改|切换|重新选择)|whaledraw_open.*reselect["']?\s*:\s*true/.test(text);
             if (reselect) defaultChanges.add(payload.agent);
             await prepare(payload.agent, payload.signal, reselect, true);
         }
         return decision;
     });
     ctx.effect(() => ctx.systemPrompt.section({
-        name: "dsh-infinite-canvas:usage", order: ctx.systemPrompt.getSectionOrder("WEB_SURFACE"),
+        name: "dsh-whaledraw:usage", order: ctx.systemPrompt.getSectionOrder("WEB_SURFACE"),
         text: ({ agent }) => {
             const binding = agent && (targets.get(agent) || bindings.get(agent.session.id));
             const current = binding?.mode === "canvas" ? `本次操作画布为 ${binding.projectId}，图片使用 canvas_generate_image 生成到这个画布。`
                 : binding?.mode === "workbench" ? "本次操作位置为生图工作台。必须使用 workbench_image_get_config / workbench_image_generate 生图，不得创建或修改画布。"
                 : "当前会话尚未选择画布连接方式。";
-            return `用户提到画布或需要生成、编辑图片时，先调用 infinite_canvas_open 等待选择与连接完成。插件每次生图前检查侧边栏，位置不同时询问当前侧边栏、默认绑定或其他画布，不得代替用户选择。${current} 这是本次请求的操作位置，临时选择不修改默认绑定；仅当用户明确要求更改连接或默认画布时调用 infinite_canvas_open({reselect:true})。使用 mcp__infinite-canvas__ 前缀的工具和插件自己的模型配置。打开、选择或连接失败时说明原因，不声称已生成或已修改。`;
+            return `用户提到 WhaleDraw、画布或需要生成、编辑图片时，先调用 whaledraw_open 等待选择与连接完成。插件每次生图前检查侧边栏，位置不同时询问当前侧边栏、默认绑定或其他画布，不得代替用户选择。${current} 这是本次请求的操作位置，临时选择不修改默认绑定；仅当用户明确要求更改连接或默认画布时调用 whaledraw_open({reselect:true})。使用 mcp__whaledraw__ 前缀的工具和插件自己的模型配置。打开、选择或连接失败时说明原因，不声称已生成或已修改。`;
         },
     }));
     ctx.effect(() => () => {
-        for (const request of pending.values()) request.finish(new Error("无限画布插件已停用"));
+        for (const request of pending.values()) request.finish(new Error("WhaleDraw 插件已停用"));
         for (const streams of clients.values()) for (const stream of streams) stream.end();
         clients.clear();
     });

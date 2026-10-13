@@ -38,10 +38,10 @@ jobs:
           rm package-lock.json
           npm install --legacy-peer-deps
       - name: Install plugin dependencies
-        working-directory: plugins/dsh-infinite-canvas
+        working-directory: plugins/dsh-whaledraw
         run: pnpm install --frozen-lockfile --no-optional --ignore-scripts
       - name: Build and pack plugin
-        working-directory: plugins/dsh-infinite-canvas
+        working-directory: plugins/dsh-whaledraw
         run: |
           node scripts/build.mjs
           pnpm --config.ignore-scripts=true pack --pack-destination dist
@@ -50,4 +50,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${RELEASE_TAG#v}"
-          gh release upload "$RELEASE_TAG" "plugins/dsh-infinite-canvas/dist/dsh-infinite-canvas-$version.tgz"
+          gh release upload "$RELEASE_TAG" "plugins/dsh-whaledraw/dist/dsh-whaledraw-$version.tgz"
