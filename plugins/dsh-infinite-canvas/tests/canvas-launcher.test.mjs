@@ -226,7 +226,7 @@ test("recognizes ordinary requests to change the default canvas", async (t) => {
     await setImmediate();
     fixture.acknowledge(stream, "chat-a");
     await initial;
-    for (const text of ["切换到新的默认画布。", "把画布1设置为默认画布。", "将默认画布改为画布2。"] ) {
+    for (const text of ["切换到新的默认画布。", "把画布1设置为默认画布。", "将默认画布改为画布2。"]) {
         const decision = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text }] }] };
         const result = fixture.handlers.get("agent/pre-step")(exec, async () => decision);
         await setImmediate();
