@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { cp, link, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, link, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { join, relative, isAbsolute } from "node:path";
@@ -18,7 +18,7 @@ const nativeOptions = { skip: !native || !pnpm };
 
 async function runPnpm(profile, args) {
     return new Promise((resolve, reject) => {
-        const child = spawn(node, [pnpm, ...args, "--ignore-scripts"], { cwd: profile, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+        const child = spawn(node, [pnpm, ...args, "--ignore-scripts"], { cwd: profile, env: { ...process.env, DSH_HOME: join(profile, ".dsh-home") }, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
         let output = "";
         child.stdout.on("data", (chunk) => { output += chunk; });
         child.stderr.on("data", (chunk) => { output += chunk; });
@@ -59,20 +59,25 @@ async function fixture(t, useNative = false) {
     await mkdir(modules, { recursive: true });
     await writeFile(join(profile, "package.json"), JSON.stringify({ name: "test-profile", private: true, dependencies: { [name]: `link:${source}`, "other-plugin": `link:${otherSource}` }, dsh: { profile: { bundles: [name] } } }));
     await writeFile(join(profile, "pnpm-workspace.yaml"), "packages:\n  - .\nnodeLinker: hoisted\nautoInstallPeers: false\n");
+    const installFiles = async () => {
+        await rename(join(modules, name), join(await mkdtemp(join(root, "replaced-")), name));
+        await cp(join(root, "release/package"), join(modules, name), { recursive: true });
+    };
     let manager;
     if (useNative) {
         const { PluginManager } = await import(pathToFileURL(native));
-        manager = Object.create(PluginManager.prototype);
-        Object.assign(manager, {
-            profile: { dir: profile, installAnchor: join(profile, "package.json"), startedBundles: [name] },
-            abort: new AbortController(), installs: new Map(), packageOperations: new Set(),
-            ownerContext: { get() {}, emit() {}, logger: { warn() {} } },
-            async registries() { return { registry: null, fallbackRegistries: [], resolved: null }; },
-            async configure(operation) { return operation(); }, async selectBundle() {},
-            async runPnpm(args) { return runPnpm(profile, args); },
-        });
         const first = await runPnpm(profile, ["add", `link:${source}`]);
         assert.equal(first.exitCode, 0, first.output);
+        const require = createRequire(pathToFileURL(native));
+        const { Context } = await import(pathToFileURL(require.resolve("@deepseek-ai/cordis")));
+        const context = new Context();
+        context.provide("profileContext", {
+            dir: profile, installAnchor: join(profile, "package.json"), startedBundles: [name],
+            packageManager: { command: node, args: [pnpm, "--ignore-scripts"], env: { DSH_HOME: join(profile, ".dsh-home") } },
+        });
+        await context.plugin({ name: "canvas-update-test-service", apply(ctx) { new PluginManager(ctx, PluginManager.Config({ fallbackRegistries: [] })); } });
+        t.after(() => context.fiber.dispose());
+        manager = context.get("pluginManager");
     } else {
         await symlink(source, join(modules, name), process.platform === "win32" ? "junction" : "dir");
         manager = {
@@ -86,8 +91,7 @@ async function fixture(t, useNative = false) {
                 return result;
             },
             installBundle(file) { return this.change(async (result) => {
-                await cp(join(root, "release/package"), join(modules, name), { recursive: true });
-                await symlink(otherSource, join(modules, "other-plugin"), process.platform === "win32" ? "junction" : "dir");
+                await installFiles();
                 result.bundle = name;
                 return "restart-required";
             }, { stage: "install", target: file }); },
@@ -106,7 +110,7 @@ async function fixture(t, useNative = false) {
         if (!useNative) { await rm(join(root, "release"), { recursive: true, force: true }); await cp(stage, join(root, "release"), { recursive: true }); }
         return { directory, file };
     };
-    return { root, profile, modules, source, manager, build };
+    return { root, profile, modules, source, otherSource, manager, build, installFiles };
 }
 
 test("链接入口移开后安装，源码保留，正式包可以再次更新", async (t) => {
@@ -127,7 +131,7 @@ for (const failure of ["安装器抛错", "文件缺失", "文件篡改", "多�
     const install = f.manager.installBundle;
     f.manager.installBundle = function (file) {
         return this.change(async (result) => {
-            await cp(join(f.root, "release/package"), join(f.modules, name), { recursive: true });
+            await f.installFiles();
             await writeFile(join(f.profile, "package.json"), "错误配置");
             result.bundle = name;
             if (failure === "安装器抛错") throw new Error("模拟安装中断");
@@ -154,6 +158,78 @@ test("错误版本在触碰安装目录前拒绝", async (t) => {
     const { file, directory } = await f.build("1.0.1");
     await assert.rejects(installVerifiedBundle(f.manager, file, "1.0.2", directory), /版本不一致/);
     assert.equal(await realpath(join(f.modules, name)), await realpath(f.source));
+});
+
+for (const useNative of [false, true]) test(`遗留或损坏运行记录在备份前阻断更新（${useNative ? "原生" : "模拟"}管理器）`, useNative ? nativeOptions : {}, async (t) => {
+    const f = await fixture(t, useNative);
+    const before = await readFile(join(f.profile, "package.json"), "utf8");
+    for (const [index, record] of [JSON.stringify({ pid: process.pid, grouped: false }), "损坏记录"].entries()) {
+        const version = `1.0.${index + 1}`;
+        const { file, directory } = await f.build(version);
+        const runRecord = join(f.profile, ".plugin-manager/run.json");
+        await writeFile(runRecord, record);
+        const result = await installVerifiedBundle(f.manager, file, version, directory);
+        assert.equal(result.application, "failed");
+        assert.match(result.error.diagnostic, /安装运行记录尚未清理/);
+        assert.equal(await readFile(runRecord, "utf8"), record);
+        assert.equal(await readFile(join(f.profile, "package.json"), "utf8"), before);
+        assert.equal(await realpath(join(f.modules, name)), await realpath(f.source));
+        await assert.rejects(lstat(join(directory, "dependencies-backup.tgz")), { code: "ENOENT" });
+        await assert.rejects(lstat(join(directory, "previous-node_modules")), { code: "ENOENT" });
+    }
+});
+
+test("安装前保留依赖基线并隔离源码链接和硬链接", async (t) => {
+    const f = await fixture(t);
+    const manifest = await readFile(join(f.source, "package.json"), "utf8");
+    const otherManifest = await readFile(join(f.otherSource, "package.json"), "utf8");
+    f.manager.installBundle = function (file) {
+        return this.change(async (result) => {
+            const target = join(f.modules, name);
+            assert.equal(await readFile(join(target, "package.json"), "utf8"), manifest);
+            assert.equal(await readFile(join(f.modules, "other-plugin/package.json"), "utf8"), otherManifest);
+            assert.equal((await lstat(target)).isSymbolicLink(), false);
+            await assert.rejects(lstat(join(target, "node_modules")), { code: "ENOENT" });
+            await writeFile(join(target, "keep.txt"), "修改安装副本");
+            assert.equal(await readFile(join(f.source, "keep.txt"), "utf8"), "源码必须保留");
+            assert.equal(await readFile(join(f.source, "keep-alias.txt"), "utf8"), "源码必须保留");
+            await f.installFiles();
+            result.bundle = name;
+            return "restart-required";
+        }, { stage: "install", target: file });
+    };
+    const { file, directory } = await f.build("1.0.1");
+    assert.equal((await installVerifiedBundle(f.manager, file, "1.0.1", directory)).application, "restart-required");
+});
+
+test("完整原生安装保留未改动的不兼容依赖，不写入版本豁免", nativeOptions, async (t) => {
+    const f = await fixture(t, true);
+    const otherFile = join(f.otherSource, "package.json");
+    const other = JSON.parse(await readFile(otherFile, "utf8"));
+    other.peerDependencies = { "@deepseek-ai/dsh": "<0.0.0" };
+    const text = JSON.stringify(other);
+    await writeFile(otherFile, text);
+    const { file, directory } = await f.build("1.0.1");
+    const result = await installVerifiedBundle(f.manager, file, "1.0.1", directory);
+    assert.equal(result.application, "restart-required", JSON.stringify(result));
+    assert.equal(await readFile(join(f.modules, "other-plugin/package.json"), "utf8"), text);
+    await assert.rejects(lstat(join(f.profile, "compatibility.json")), { code: "ENOENT" });
+});
+
+test("完整原生安装仍拒绝更新目标的不兼容版本并回滚", nativeOptions, async (t) => {
+    const f = await fixture(t, true);
+    const { file, directory } = await f.build("1.0.1");
+    const stage = join(f.root, "release-1.0.1");
+    const manifestFile = join(stage, "package/package.json");
+    const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
+    manifest.peerDependencies = { "@deepseek-ai/dsh": "<0.0.0" };
+    await writeFile(manifestFile, JSON.stringify(manifest));
+    await pack({ cwd: stage, file, gzip: true }, ["package"]);
+    const result = await installVerifiedBundle(f.manager, file, "1.0.1", directory);
+    assert.equal(result.application, "failed", JSON.stringify(result));
+    assert.match(result.error.diagnostic, /incompatible/i);
+    assert.equal(await realpath(join(f.modules, name)), await realpath(f.source));
+    assert.equal(JSON.parse(await readFile(join(directory, "recovery.json"))).status, "rolled-back");
 });
 
 test("检测到未完成的恢复记录时拒绝下一次更新", async (t) => {
@@ -252,17 +328,8 @@ test("DSH 原生安装事务 + pnpm：link 和连续正式包升级保留源码"
 
 test("通过 Cordis 宿主服务代理调用时仍进入安全事务", nativeOptions, async (t) => {
     const f = await fixture(t, true);
-    const require = createRequire(pathToFileURL(native));
-    const { Context } = await import(pathToFileURL(require.resolve("@deepseek-ai/cordis")));
-    const { PluginManager } = await import(pathToFileURL(native));
-    const root = new Context();
-    root.provide("profileContext", { ...f.manager.profile, startedBundles: [] });
-    await root.plugin({ name: "canvas-update-test-service", apply(ctx) { new PluginManager(ctx, { fallbackRegistries: [] }); } });
-    t.after(() => root.fiber.dispose());
-    const manager = root.get("pluginManager");
-    for (const key of ["registries", "runPnpm", "configure", "selectBundle"]) manager[key] = f.manager[key];
     const { file, directory } = await f.build("1.0.1");
-    const result = await installVerifiedBundle(manager, file, "1.0.1", directory);
+    const result = await installVerifiedBundle(f.manager, file, "1.0.1", directory);
     assert.equal(result.application, "restart-required", JSON.stringify(result));
     assert.equal(await readFile(join(f.source, "keep.txt"), "utf8"), "源码必须保留");
     assert.equal(JSON.parse(await readFile(join(directory, "recovery.json"))).status, "installed");
