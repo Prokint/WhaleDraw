@@ -109,9 +109,9 @@ window.__ModuleLoader__.load({
                         return;
                     }
                     if (event.data?.type === "dsh-infinite-canvas:prepared") {
-                        const { requestId: preparedId, clientId, projectId, error } = event.data;
+                        const { requestId: preparedId, clientId, projectId, error, errorCode } = event.data;
                         if (!prepares.current.delete(preparedId)) return;
-                        void reportOpen(sessionId, { requestId: preparedId, ...(error ? { error } : { clientId, ...(projectId ? { projectId } : {}) }) });
+                        void reportOpen(sessionId, { requestId: preparedId, ...(error ? { error, ...(errorCode ? { errorCode } : {}) } : { clientId, ...(projectId ? { projectId } : {}) }) });
                         return;
                     }
                     if (event.data?.type !== "dsh-infinite-canvas:open-chat") return;

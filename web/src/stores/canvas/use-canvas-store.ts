@@ -66,22 +66,48 @@ export async function canvasStorageChanged() {
     return (await localForageStorage.getItem(CANVAS_STORE_KEY)) !== knownRaw;
 }
 
-/** 丢弃当前页面的内存副本，重新从 IndexedDB 读取画布库；后台会话在操作画布前用它对齐磁盘状态。 */
+function mergePendingChanges<T extends { id: string }>(previous: T[], pending: T[], disk: T[]) {
+    const before = new Map(previous.map((item) => [item.id, JSON.stringify(item)]));
+    const localIds = new Set(pending.map((item) => item.id));
+    const changed = pending.filter((item) => JSON.stringify(item) !== before.get(item.id));
+    const changedIds = new Set(changed.map((item) => item.id));
+    return [...changed, ...disk.filter((item) => !changedIds.has(item.id) && (!before.has(item.id) || localIds.has(item.id)))];
+}
+
+/** 重读磁盘时只保留本页尚未保存的变更，避免重载丢掉新项目或回写旧副本。 */
 export async function reloadCanvasStorage() {
+    await persistWrite;
+    const pending = pendingPersistValue;
+    const previous = knownRaw ? (JSON.parse(knownRaw) as StorageValue<CanvasStore>).state : { projects: [], deletedProjects: [] };
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    pendingPersistValue = null;
     useCanvasStore.setState({ hydrated: false });
     try {
         await useCanvasStore.persist.rehydrate();
+        if (!useCanvasStore.persist.hasHydrated()) throw new Error("无法重新读取画布库，请重试");
+        if (pending) {
+            const disk = useCanvasStore.getState();
+            useCanvasStore.setState({
+                projects: mergePendingChanges(previous.projects, pending.state.projects, disk.projects),
+                deletedProjects: mergePendingChanges(previous.deletedProjects, pending.state.deletedProjects, disk.deletedProjects),
+            });
+        }
+    } catch (error) {
+        pendingPersistValue = pending;
+        throw error;
     } finally {
         useCanvasStore.setState({ hydrated: true });
     }
+    await flushCanvasStorage();
 }
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
         const value = await localForageStorage.getItem(name);
         if (!value) return null;
-        knownRaw = value;
         const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
+        knownRaw = value;
         queuedPersistState = parsed.state as PersistedCanvasState;
         return parsed;
     },

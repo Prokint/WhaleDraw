@@ -38,7 +38,7 @@ export function DshCanvasBridge() {
         let reportingReady = false;
         let choosingProject = false;
         let reloading = false;
-        const reportPrepare = (result: { clientId?: string; projectId?: string; error?: string }) => {
+        const reportPrepare = (result: { clientId?: string; projectId?: string; error?: string; errorCode?: string }) => {
             if (!prepareRequestId || disposed) return;
             window.parent.postMessage({ type: "dsh-infinite-canvas:prepared", requestId: prepareRequestId, ...result }, window.location.origin);
             prepareRequestId = "";
@@ -62,12 +62,14 @@ export function DshCanvasBridge() {
             if (!store.hydrated) return;
             const id = /^\/canvas\/([^/]+)$/.exec(route.current)?.[1];
             const project = store.projects.find((project) => project.id === id);
+            const accessError = useAgentStore.getState().canvasAccessError;
+            const blocked = !!accessError && accessError.projectId === id;
             const snapshot = useAgentStore.getState().canvasContext?.snapshot;
-            if (project && snapshot?.projectId !== id) return;
+            if (project && snapshot?.projectId !== id && !blocked) return;
             for (const [requestId, defaultProjectId] of inspections) {
                 window.parent.postMessage({ type: "dsh-infinite-canvas:inspected", requestId,
-                    mode: project ? "canvas" : route.current === "/image" ? "workbench" : "none",
-                    projectId: project?.id, title: snapshot?.projectId === id ? snapshot.title : project?.title,
+                    mode: project && !blocked ? "canvas" : route.current === "/image" ? "workbench" : "none",
+                    projectId: project?.id, title: snapshot && snapshot.projectId === id ? snapshot.title : project?.title,
                     defaultTitle: store.projects.find((project) => project.id === defaultProjectId)?.title,
                 }, window.location.origin);
                 inspections.delete(requestId);
@@ -79,6 +81,11 @@ export function DshCanvasBridge() {
             const store = useCanvasStore.getState();
             if (!store.hydrated) return;
             if (prepareMode === "workbench") { void completePrepare(); return; }
+            const accessError = useAgentStore.getState().canvasAccessError;
+            if (accessError && route.current === `/canvas/${accessError.projectId}` && ((prepareMode === "existing" && selectionStarted) || preparedProjectId === accessError.projectId)) {
+                reportPrepare({ error: accessError.message, errorCode: accessError.code });
+                return;
+            }
             if (prepareMode === "canvas" && !store.projects.some((project) => project.id === preparedProjectId)) {
                 reportPrepare({ error: "会话关联的画布已不存在，请让 Agent 重新选择连接方式" });
                 return;
@@ -161,6 +168,8 @@ export function DshCanvasBridge() {
             const bridge = config;
             if (!bridge) return;
             try {
+                const accessError = useAgentStore.getState().canvasAccessError;
+                if (accessError && call.name.startsWith("canvas_") && call.name !== "canvas_list_projects") throw new Error(accessError.message);
                 let result: unknown;
                 if (prepareMode === "workbench" && ((call.name.startsWith("canvas_") && call.name !== "canvas_list_projects") || (call.name === "site_navigate" && /^\/(?:canvas)?(?:\/|$)/.test(call.input?.path || "/")))) {
                     throw new Error("当前会话不连接画布，请在生图工作台生成图片");
