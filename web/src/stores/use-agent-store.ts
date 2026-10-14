@@ -79,6 +79,7 @@ type AgentStore = {
     bootstrapStatus: AgentBootstrapStatus | null;
     mcpStartupStatuses: Record<string, AgentBootstrapStatus>;
     connectError: string;
+    canvasAccessError: { projectId: string; message: string; code?: string } | null;
     pendingTool: AgentPendingToolCall | null;
     pendingApprovals: AgentPendingApproval[];
     setAgentState: (patch: Partial<Omit<AgentStore, "setAgentState" | "connectAgent" | "disconnectAgent" | "addMessage" | "addEventLog" | "clearEventLogs" | "openPanel" | "closePanel" | "togglePanel" | "setCanvasContext">>) => void;
@@ -131,6 +132,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     bootstrapStatus: null,
     mcpStartupStatuses: {},
     connectError: "",
+    canvasAccessError: null,
     pendingTool: null,
     pendingApprovals: [],
     setAgentState: (patch) => set(patch),

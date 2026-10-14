@@ -43,8 +43,9 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/a
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
-import { flushCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { openDshChat } from "@/constant/env";
+import { canvasStorageChanged, flushCanvasStorage, reloadCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { IS_DSH_PLUGIN, openDshChat } from "@/constant/env";
+import { acquireCanvasAccess } from "@/lib/canvas/canvas-exclusive-access";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -145,12 +146,52 @@ function applyGeneratedVideo(item: CanvasNodeData, video: UploadedFile, extra: C
 }
 
 export default function CanvasPage() {
+    const { id: projectId = "" } = useParams();
+    const navigate = useNavigate();
     const [mounted, setMounted] = useState(false);
+    const [access, setAccess] = useState<{ projectId: string; error?: string } | null>(null);
+    const [attempt, setAttempt] = useState(0);
 
     useEffect(() => {
         setMounted(true);
     }, []);
 
+    useEffect(() => {
+        if (!IS_DSH_PLUGIN || !projectId) return;
+        let disposed = false;
+        let release: (() => void) | undefined;
+        useAgentStore.getState().setAgentState({ canvasAccessError: null });
+        setAccess(null);
+        void acquireCanvasAccess(projectId).then(async (unlock) => {
+            release = unlock;
+            if (disposed) { unlock(); return; }
+            if (await canvasStorageChanged()) await reloadCanvasStorage();
+            if (disposed) return;
+            setAccess({ projectId });
+        }).catch((error: Error & { code?: string }) => {
+            release?.();
+            if (disposed) return;
+            useAgentStore.getState().setAgentState({ canvasAccessError: { projectId, message: error.message, code: error.code } });
+            setAccess({ projectId, error: error.message });
+        });
+        return () => {
+            disposed = true;
+            // 等正文清理与最后一次保存完成，再允许另一个页面接手。
+            if (release) void Promise.resolve().then(flushCanvasStorage).finally(release).catch(() => {});
+            useAgentStore.getState().setAgentState({ canvasAccessError: null });
+        };
+    }, [projectId, attempt]);
+
+    if (IS_DSH_PLUGIN && access?.projectId === projectId && access.error) return (
+        <main className="flex h-full flex-col items-center justify-center gap-4 bg-background p-6 text-center text-foreground" role="alert">
+            <p>{access.error}</p>
+            <div className="flex gap-4">
+                <button className="rounded px-3 py-2 hover:bg-black/5 dark:hover:bg-white/10" onClick={() => navigate("/canvas")}>选择其他画布</button>
+                <button className="rounded px-3 py-2 hover:bg-black/5 dark:hover:bg-white/10" onClick={() => setAttempt((value) => value + 1)}>重试连接</button>
+            </div>
+        </main>
+    );
+    if (IS_DSH_PLUGIN && access?.projectId !== projectId) return <CanvasRefreshShell />;
     if (!mounted) return <CanvasRefreshShell />;
 
     return <InfiniteCanvasPage />;

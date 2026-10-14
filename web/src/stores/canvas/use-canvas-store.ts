@@ -46,14 +46,60 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
 let pendingPersistValue: StorageValue<CanvasStore> | null = null;
 let persistWrite = Promise.resolve();
+/** 本页面最后一次读写的画布库原文，用来判断其他页面是否改过磁盘上的内容。 */
+let knownRaw: string | null = null;
 
 export function flushCanvasStorage() {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
     const value = pendingPersistValue;
     pendingPersistValue = null;
-    if (value) persistWrite = persistWrite.then(() => localForageStorage.setItem(CANVAS_STORE_KEY, JSON.stringify(value)));
+    if (value) {
+        const raw = JSON.stringify(value);
+        persistWrite = persistWrite.then(() => localForageStorage.setItem(CANVAS_STORE_KEY, raw)).then(() => { knownRaw = raw; });
+    }
     return persistWrite;
+}
+
+/** 磁盘上的画布库是否已被其他页面改写。 */
+export async function canvasStorageChanged() {
+    return (await localForageStorage.getItem(CANVAS_STORE_KEY)) !== knownRaw;
+}
+
+function mergePendingChanges<T extends { id: string }>(previous: T[], pending: T[], disk: T[]) {
+    const before = new Map(previous.map((item) => [item.id, JSON.stringify(item)]));
+    const localIds = new Set(pending.map((item) => item.id));
+    const changed = pending.filter((item) => JSON.stringify(item) !== before.get(item.id));
+    const changedIds = new Set(changed.map((item) => item.id));
+    return [...changed, ...disk.filter((item) => !changedIds.has(item.id) && (!before.has(item.id) || localIds.has(item.id)))];
+}
+
+/** 重读磁盘时只保留本页尚未保存的变更，避免重载丢掉新项目或回写旧副本。 */
+export async function reloadCanvasStorage() {
+    await persistWrite;
+    const pending = pendingPersistValue;
+    const previous = knownRaw ? (JSON.parse(knownRaw) as StorageValue<CanvasStore>).state : { projects: [], deletedProjects: [] };
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    pendingPersistValue = null;
+    useCanvasStore.setState({ hydrated: false });
+    try {
+        await useCanvasStore.persist.rehydrate();
+        if (!useCanvasStore.persist.hasHydrated()) throw new Error("无法重新读取画布库，请重试");
+        if (pending) {
+            const disk = useCanvasStore.getState();
+            useCanvasStore.setState({
+                projects: mergePendingChanges(previous.projects, pending.state.projects, disk.projects),
+                deletedProjects: mergePendingChanges(previous.deletedProjects, pending.state.deletedProjects, disk.deletedProjects),
+            });
+        }
+    } catch (error) {
+        pendingPersistValue = pending;
+        throw error;
+    } finally {
+        useCanvasStore.setState({ hydrated: true });
+    }
+    await flushCanvasStorage();
 }
 
 const canvasStorage: PersistStorage<CanvasStore> = {
@@ -61,6 +107,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         const value = await localForageStorage.getItem(name);
         if (!value) return null;
         const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
+        knownRaw = value;
         queuedPersistState = parsed.state as PersistedCanvasState;
         return parsed;
     },

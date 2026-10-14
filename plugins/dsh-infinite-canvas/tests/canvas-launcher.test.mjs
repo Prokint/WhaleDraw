@@ -11,6 +11,7 @@ function setup(t) {
     const activations = [];
     const bindings = new Map();
     let tool;
+    let prompt;
     const previousFetch = globalThis.fetch;
     globalThis.fetch = async (url, options) => { activations.push({ url: new URL(url), signal: options.signal }); return { ok: true }; };
     const ctx = {
@@ -20,7 +21,7 @@ function setup(t) {
         webServer: { register(route) { routes.set(route.path, route.handler); return () => routes.delete(route.path); } },
         tools: { register(value) { tool = value; return () => {}; } },
         userQuestions: { async ask() { return { answers: [{ id: "canvas-connection", selected: ["新开画布"] }] }; } },
-        systemPrompt: { getSectionOrder() { return 1; }, section() { return () => {}; } },
+        systemPrompt: { getSectionOrder() { return 1; }, section(value) { prompt = value; return () => {}; } },
     };
     installCanvasLauncher(ctx, async () => ({ url: "http://127.0.0.1:17371", token: "test-token" }), { get: (id) => bindings.get(id), put: async (id, value) => { bindings.set(id, value); } });
     t.after(() => { for (const dispose of disposers.reverse()) dispose(); globalThis.fetch = previousFetch; });
@@ -38,7 +39,7 @@ function setup(t) {
         end() { this.emit("close"); },
     });
     return {
-        tool, handlers, activations,
+        tool, handlers, activations, prompt,
         attach(sessionId, authorization) {
             const stream = response();
             stream.sessionId = sessionId;
@@ -135,11 +136,79 @@ test("frontend errors and closed interfaces prevent canvas tool execution", asyn
     await setImmediate();
     stream.end();
     await closed;
-    await assert.rejects(fixture.tool.execute({}, execution()), /打开当前聊天/);
+    const missing = await fixture.tool.execute({}, execution());
+    assert.equal(missing.connected, false);
+    assert.match(missing.message, /打开当前聊天/);
 });
 
 test("unauthenticated interfaces cannot subscribe to opening requests", async (t) => {
     const fixture = setup(t);
     assert.equal(fixture.attach("chat-a", "").status, 401);
-    await assert.rejects(fixture.tool.execute({}, execution()), /打开当前聊天/);
+    assert.equal((await fixture.tool.execute({}, execution())).connected, false);
+});
+
+test("画布占用不使模型前置步骤失败，工具返回正常提示且不执行读写", async (t) => {
+    const fixture = setup(t);
+    const stream = fixture.attach("chat-a");
+    const exec = execution();
+    const decision = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text: "读取画布" }] }] };
+    const result = fixture.handlers.get("agent/pre-step")(exec, async () => decision);
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a", { error: "画布已被其他会话或页面占用，请先关闭原会话中的画布，再重试", errorCode: "canvas-occupied" });
+    assert.equal(await result, decision);
+    let called = false;
+    const blocked = await fixture.handlers.get("tools/execute")({ ...exec, name: "mcp__infinite-canvas__canvas_apply_ops" }, async () => { called = true; });
+    assert.equal(blocked.isError, false);
+    assert.equal(blocked.value.connected, false);
+    assert.match(blocked.content[0].text, /未读取或修改/);
+    assert.equal(called, false);
+    assert.equal(fixture.activations.length, 0);
+    assert.equal(fixture.tool.execute({}, exec).connected, false);
+    const retried = fixture.tool.execute({ reselect: true }, exec);
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a");
+    assert.equal((await retried).connected, true);
+});
+
+test("连接工具将占用结果作为正常状态返回", async (t) => {
+    const fixture = setup(t);
+    const stream = fixture.attach("chat-a");
+    const result = fixture.tool.execute({}, execution());
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a", { error: "目标正在使用，请稍后重新连接", errorCode: "canvas-occupied" });
+    assert.equal((await result).opened, false);
+    assert.match((await result).message, /正在使用/);
+    assert.equal(fixture.activations.length, 0);
+});
+
+test("无事件流时前置步骤继续，Agent 收到提示，MCP 不执行且新请求可以重试", async (t) => {
+    const fixture = setup(t);
+    const other = fixture.attach("chat-b");
+    const exec = execution();
+    const decision = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text: "读取画布" }] }] };
+    assert.equal(await fixture.handlers.get("agent/pre-step")(exec, async () => decision), decision);
+    assert.match(fixture.prompt.text({ agent: exec.agent }), /打开当前聊天.*正常的连接状态提示/);
+    assert.equal(fixture.tool.execute({}, exec).opened, false);
+    let called = false;
+    const blocked = await fixture.handlers.get("tools/execute")({ ...exec, name: "mcp__infinite-canvas__canvas_get_state" }, async () => { called = true; });
+    assert.equal(blocked.isError, false);
+    assert.equal(called, false);
+    assert.equal(other.chunks.length, 1);
+    const stream = fixture.attach("chat-a");
+    const retry = fixture.handlers.get("agent/pre-step")(exec, async () => decision);
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a");
+    assert.equal(await retry, decision);
+    assert.equal(fixture.activations.length, 1);
+    assert.match(fixture.prompt.text({ agent: exec.agent }), /本次操作画布为 canvas-project/);
+});
+
+test("占用文案没有状态码时仍作为真实异常处理", async (t) => {
+    const fixture = setup(t);
+    const stream = fixture.attach("chat-a");
+    const result = fixture.tool.execute({}, execution());
+    const rejected = assert.rejects(result, /占用/);
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a", { error: "画布已被其他会话或页面占用" });
+    await rejected;
 });

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, readFile, readdir, readlink, realpath, rename } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, readdir, readlink, realpath, rename, unlink } from "node:fs/promises";
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import { c as pack, t as list, x as extract } from "tar";
 
@@ -132,6 +132,9 @@ export async function installVerifiedBundle(manager, file, version, directory) {
         intercepted = true;
         return change.call(this, async (result) => {
             await assertNoInterruptedUpdate(join(profile, ".plugin-manager", "downloads"));
+            const runRecord = join(profile, ".plugin-manager", "run.json");
+            // 原生运行检查发生在 runPnpm 内，不能等移动依赖后才发现遗留进程。
+            if (await exists(runRecord)) throw new Error(`DSH 安装运行记录尚未清理，已停止更新。请确认该 profile 的所有安装进程已结束，再由 DSH 处理或人工核对记录：${runRecord}`);
             const original = await exists(target);
             if (!original || (!original.isDirectory() && !original.isSymbolicLink())) throw new Error("旧插件目录异常，已停止更新。");
             const moduleStat = await lstat(modules);
@@ -163,11 +166,19 @@ export async function installVerifiedBundle(manager, file, version, directory) {
                 sourceArchiveSHA = await streamHash(createReadStream(copy));
             }
             await saveJournal("prepared");
-            // 保留整个旧依赖树（包括其他插件的链接），让 pnpm 在空目录安装，失败可整体恢复。
+            // 保留旧树后重建独立副本，原生兼容性检查仍需读取安装前的依赖。
             try { await rename(modules, previous); }
             catch (error) { throw new Error(`无法保留旧依赖目录，可能被运行任务占用；尚未执行安装。${error.message}`); }
             try {
                 await saveJournal("installing");
+                await mkdir(modules);
+                await extract({ file: dependencyArchive, cwd: modules, strict: true });
+                if (await inventory(modules) !== before) throw new Error("待更新依赖副本复查失败。");
+                if (original.isSymbolicLink()) {
+                    // 不把源码链接交给 pnpm；普通副本不包含本地依赖或嵌套链接。
+                    await unlink(target);
+                    await cp(source, target, { recursive: true, filter: async (path) => path !== join(source, "node_modules") && !(await lstat(path)).isSymbolicLink() });
+                }
                 const application = await operation(result);
                 if (!["applied", "restart-required"].includes(application) || result.bundle !== packageName) throw new Error("DSH 未确认安装成功。");
                 const installed = await exists(target);
