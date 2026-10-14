@@ -1,4 +1,3 @@
-import { createDshSharedStore } from "@/lib/dsh-shared-store";
 import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -213,7 +212,7 @@ function isAiConfigReady(config: AiConfig, model: string) {
     return Boolean(match && match.channel.baseUrl.trim() && match.channel.apiKey.trim());
 }
 
-export const useConfigStore = createDshSharedStore("config", () => create<ConfigStore>()(
+export const useConfigStore = create<ConfigStore>()(
     persist(
         (set, get) => ({
             config: defaultConfig,
@@ -290,7 +289,7 @@ export const useConfigStore = createDshSharedStore("config", () => create<Config
             },
         },
     ),
-));
+);
 
 export function useEffectiveConfig() {
     const config = useConfigStore((state) => state.config);

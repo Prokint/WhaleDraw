@@ -134,14 +134,12 @@ function videoPluginResult(result: unknown): VideoGenerationResult {
     throw new Error(apiText("scriptNoVideo"));
 }
 
-export async function storeGeneratedVideo(result: VideoGenerationResult, options?: { signal?: AbortSignal }): Promise<UploadedFile> {
-    options?.signal?.throwIfAborted();
-    if (result.blob) return uploadMediaFile(result.blob, "video", options);
+export async function storeGeneratedVideo(result: VideoGenerationResult): Promise<UploadedFile> {
+    if (result.blob) return uploadMediaFile(result.blob, "video");
     if (result.url) {
         try {
-            return await uploadMediaFile(result.url, "video", options);
+            return await uploadMediaFile(result.url, "video");
         } catch {
-            options?.signal?.throwIfAborted();
             return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
         }
     }
