@@ -1,4 +1,3 @@
-import { createDshSharedStore } from "@/lib/dsh-shared-store";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
@@ -28,7 +27,7 @@ type PromptSourceStore = {
     updateSchedule: <K extends keyof PromptSourceSchedule>(key: K, value: PromptSourceSchedule[K]) => void;
 };
 
-export const usePromptSourceStore = createDshSharedStore("prompts", () => create<PromptSourceStore>()(
+export const usePromptSourceStore = create<PromptSourceStore>()(
     persist(
         (set) => ({
             sources: DEFAULT_PROMPT_SOURCES,
@@ -57,4 +56,4 @@ export const usePromptSourceStore = createDshSharedStore("prompts", () => create
             },
         },
     ),
-));
+);

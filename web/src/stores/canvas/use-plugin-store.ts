@@ -1,4 +1,3 @@
-import { createDshSharedStore } from "@/lib/dsh-shared-store";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -24,7 +23,7 @@ type PluginStore = {
     remove: (id: string) => void;
 };
 
-export const usePluginStore = createDshSharedStore("plugins", () => create<PluginStore>()(
+export const usePluginStore = create<PluginStore>()(
     persist(
         (set) => ({
             plugins: [],
@@ -43,4 +42,4 @@ export const usePluginStore = createDshSharedStore("plugins", () => create<Plugi
             storage: createJSONStorage(() => localForageStorage),
         },
     ),
-));
+);

@@ -8,24 +8,14 @@ export type UploadedFile = { url: string; storageKey: string; bytes: number; mim
 const store = localforage.createInstance({ name: "infinite-canvas", storeName: "media_files" });
 const objectUrls = new Map<string, string>();
 
-export async function uploadMediaFile(input: string | Blob, prefix = "file", options?: { signal?: AbortSignal }): Promise<UploadedFile> {
-    const signal = options?.signal;
-    signal?.throwIfAborted();
-    const blob = typeof input === "string" ? await (await fetch(withLocalProxy(input), { signal })).blob() : input;
-    signal?.throwIfAborted();
+export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
+    const blob = typeof input === "string" ? await (await fetch(withLocalProxy(input))).blob() : input;
     const storageKey = `${prefix}:${nanoid()}`;
-    try {
-        await store.setItem(storageKey, blob);
-        signal?.throwIfAborted();
-        const url = URL.createObjectURL(blob);
-        objectUrls.set(storageKey, url);
-        const meta = blob.type.startsWith("video/") ? await readVideoMeta(url) : blob.type.startsWith("audio/") ? await readAudioMeta(url) : {};
-        signal?.throwIfAborted();
-        return { url, storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta };
-    } catch (error) {
-        await deleteStoredMedia([storageKey]);
-        throw error;
-    }
+    await store.setItem(storageKey, blob);
+    const url = URL.createObjectURL(blob);
+    objectUrls.set(storageKey, url);
+    const meta = blob.type.startsWith("video/") ? await readVideoMeta(url) : blob.type.startsWith("audio/") ? await readAudioMeta(url) : {};
+    return { url, storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta };
 }
 
 export async function resolveMediaUrl(storageKey?: string, fallback = "") {

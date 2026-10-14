@@ -1,4 +1,3 @@
-import { createDshSharedStore } from "@/lib/dsh-shared-store";
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
@@ -37,12 +36,8 @@ type CanvasStore = {
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
     replaceProjects: (projects: CanvasProject[], deletedProjects?: CanvasDeletedProject[]) => void;
-    updateProject: (id: string, patch: CanvasProjectPatch | ((project: CanvasProject) => CanvasProjectPatch)) => void;
-    restoreProject: (id: string, restore: (project: CanvasProject) => Promise<CanvasProjectPatch>, once: boolean) => Promise<CanvasProject | null>;
+    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
 };
-
-type CanvasProjectPatch = Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>;
-const restorations = new Map<string, Promise<void>>();
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
@@ -52,12 +47,12 @@ let queuedPersistState: PersistedCanvasState | null = null;
 let pendingPersistValue: StorageValue<CanvasStore> | null = null;
 let persistWrite = Promise.resolve();
 
-function flushLocalCanvasStorage() {
+export function flushCanvasStorage() {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
     const value = pendingPersistValue;
     pendingPersistValue = null;
-    if (value) persistWrite = persistWrite.then(() => localForageStorage.setItem(CANVAS_STORE_KEY, JSON.stringify(value))).then(() => {});
+    if (value) persistWrite = persistWrite.then(() => localForageStorage.setItem(CANVAS_STORE_KEY, JSON.stringify(value)));
     return persistWrite;
 }
 
@@ -75,12 +70,12 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         queuedPersistState = nextState;
         pendingPersistValue = value;
         if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => void flushLocalCanvasStorage(), 400);
+        saveTimer = setTimeout(() => void flushCanvasStorage(), 400);
     },
     removeItem: (name) => localForageStorage.removeItem(name),
 };
 
-export const useCanvasStore = createDshSharedStore("canvas", () => Object.assign(create<CanvasStore>()(
+export const useCanvasStore = create<CanvasStore>()(
     persist(
         (set, get) => ({
             hydrated: false,
@@ -141,28 +136,8 @@ export const useCanvasStore = createDshSharedStore("canvas", () => Object.assign
             replaceProjects: (projects, deletedProjects = []) => set({ projects, deletedProjects }),
             updateProject: (id, patch) =>
                 set((state) => ({
-                    projects: state.projects.map((project) => {
-                        if (project.id !== id) return project;
-                        const changes = typeof patch === "function" ? patch(project) : patch;
-                        if (Object.entries(changes).every(([key, value]) => project[key as keyof CanvasProject] === value)) return project;
-                        return { ...project, ...changes, updatedAt: new Date().toISOString() };
-                    }),
+                    projects: state.projects.map((project) => (project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString() } : project)),
                 })),
-            restoreProject: async (id, restore, once) => {
-                let pending = once ? restorations.get(id) : undefined;
-                if (!pending) {
-                    pending = (async () => {
-                        const project = get().openProject(id);
-                        if (!project) return;
-                        const patch = await restore(project);
-                        // Only hydrate fields that still match the source read before awaiting.
-                        get().updateProject(id, (current) => Object.fromEntries(Object.entries(patch).filter(([key]) => current[key as keyof CanvasProject] === project[key as keyof CanvasProject])));
-                    })();
-                    if (once) restorations.set(id, pending);
-                }
-                try { await pending; } catch (error) { restorations.delete(id); throw error; }
-                return get().openProject(id);
-            },
         }),
         {
             name: CANVAS_STORE_KEY,
@@ -177,6 +152,4 @@ export const useCanvasStore = createDshSharedStore("canvas", () => Object.assign
             },
         },
     ),
-), { flushStorage: flushLocalCanvasStorage }));
-
-export function flushCanvasStorage() { return useCanvasStore.flushStorage(); }
+);
