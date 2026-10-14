@@ -7,24 +7,70 @@ window.__ModuleLoader__.load({
         const appPath = "/plugins/dsh-infinite-canvas/app";
         const canvasRoutes = new Map();
         const sidebarFrames = new Map();
+        const sessionHosts = new Map();
         let focusedFrame;
         let hostContext;
         const reportOpen = (sessionId, result) => fetch(`${appPath}/host-result?${new URLSearchParams({ sessionId, ...result })}`);
+        const framesOf = (sessionId, mode) => [...sidebarFrames.entries()].filter(([, frame]) => frame.sessionId === sessionId && (!mode || frame.mode === mode));
+        // 每个仍有画布正文的会话各持一条宿主事件流，切换会话不影响后台会话的连接。
+        const sessionHost = (sessionId) => {
+            const existing = sessionHosts.get(sessionId);
+            if (existing) return existing;
+            const events = new EventSource(`${appPath}/host-events?sessionId=${encodeURIComponent(sessionId)}`);
+            sessionHosts.set(sessionId, events);
+            events.addEventListener("inspect-canvas", (event) => {
+                const request = JSON.parse(event.data);
+                const visible = framesOf(sessionId).filter(([, frame]) => frame.visibility.current);
+                const selected = visible.find(([element]) => element === document.activeElement) || visible.find(([element]) => element === focusedFrame) || visible.at(-1);
+                if (selected) selected[1].inspect(request);
+                else void reportOpen(sessionId, { requestId: request.requestId, mode: "none" });
+            });
+            events.addEventListener("open-canvas", (event) => {
+                const params = JSON.parse(event.data);
+                if (hostContext.sidebarRight.mounted.getSnapshot() === sessionId) {
+                    try { hostContext.sidebarRight.openTab(params.mode === "workbench" ? workbenchId : panelId, { params }); }
+                    catch (error) { void reportOpen(sessionId, { requestId: params.requestId, error: error.message }); }
+                    return;
+                }
+                const frame = framesOf(sessionId, params.mode === "workbench" ? "workbench" : "canvas").at(-1) || framesOf(sessionId).at(-1);
+                if (!frame) { void reportOpen(sessionId, { requestId: params.requestId, error: "该会话的 WhaleDraw 画布已关闭，请先打开一次画布" }); return; }
+                // 后台会话的画布正文不在屏幕上，标记后由正文在操作前重新读取磁盘状态。
+                frame[1].prepare({ ...params, background: true });
+            });
+            return events;
+        };
+        const syncHosts = () => {
+            if (!hostContext) return;
+            const wanted = new Set([...sidebarFrames.values()].map((frame) => frame.sessionId));
+            const mounted = hostContext.sidebarRight.mounted.getSnapshot();
+            if (mounted) wanted.add(mounted);
+            sessionHosts.forEach((events, sessionId) => {
+                if (wanted.has(sessionId)) return;
+                events.close();
+                sessionHosts.delete(sessionId);
+            });
+            wanted.forEach(sessionHost);
+        };
 
         function CanvasFrame({ side = false, visible = false, fullscreen = false, sessionId, requestId, mode, projectId }) {
             const frame = useRef(null);
             const visibility = useRef(visible);
             visibility.current = visible;
             const inspections = useRef(new Map());
+            const prepares = useRef(new Set());
             const initialRoute = useRef(mode === "workbench" ? "/image" : side ? canvasRoutes.get(sessionId) || "/" : "/");
             const currentRequest = useRef(requestId);
             currentRequest.current = requestId;
+            const postPrepare = (request) => {
+                prepares.current.add(request.requestId);
+                frame.current?.contentWindow.postMessage({ type: "dsh-infinite-canvas:prepare", ...request }, window.location.origin);
+            };
             const prepare = () => {
                 if (!requestId) return;
                 void fetch(`${appPath}/host-request?${new URLSearchParams({ sessionId, requestId })}`, { cache: "no-store" })
                     .then((response) => response.ok ? response.json() : null)
                     .then((request) => {
-                        if (request && currentRequest.current === requestId) frame.current?.contentWindow.postMessage({ type: "dsh-infinite-canvas:prepare", ...request }, window.location.origin);
+                        if (request && currentRequest.current === requestId) postPrepare(request);
                     })
                     .catch((error) => { void reportOpen(sessionId, { requestId, error: error.message }); });
             };
@@ -32,15 +78,19 @@ window.__ModuleLoader__.load({
             useEffect(() => {
                 if (!side) return;
                 const element = frame.current;
-                sidebarFrames.set(element, { sessionId, visibility, inspect(request) {
+                sidebarFrames.set(element, { sessionId, mode: mode === "workbench" ? "workbench" : "canvas", visibility, inspect(request) {
                     inspections.current.set(request.requestId, request);
                     element.contentWindow.postMessage({ type: "dsh-infinite-canvas:inspect", ...request }, window.location.origin);
-                } });
+                }, prepare(request) { postPrepare(request); } });
+                syncHosts();
                 return () => {
                     sidebarFrames.delete(element);
                     if (focusedFrame === element) focusedFrame = undefined;
                     for (const request of inspections.current.values()) void reportOpen(sessionId, { requestId: request.requestId, error: "侧边栏画布已关闭" });
                     inspections.current.clear();
+                    for (const requestId of prepares.current) void reportOpen(sessionId, { requestId, error: "侧边栏画布已关闭" });
+                    prepares.current.clear();
+                    syncHosts();
                 };
             }, [side, sessionId]);
             useEffect(() => {
@@ -59,10 +109,9 @@ window.__ModuleLoader__.load({
                         return;
                     }
                     if (event.data?.type === "dsh-infinite-canvas:prepared") {
-                        if (requestId && event.data.requestId === requestId) {
-                            const { clientId, projectId, error } = event.data;
-                            void reportOpen(sessionId, { requestId, ...(error ? { error } : { clientId, ...(projectId ? { projectId } : {}) }) });
-                        }
+                        const { requestId: preparedId, clientId, projectId, error } = event.data;
+                        if (!prepares.current.delete(preparedId)) return;
+                        void reportOpen(sessionId, { requestId: preparedId, ...(error ? { error } : { clientId, ...(projectId ? { projectId } : {}) }) });
                         return;
                     }
                     if (event.data?.type !== "dsh-infinite-canvas:open-chat") return;
@@ -117,41 +166,24 @@ window.__ModuleLoader__.load({
                 hostContext = ctx;
                 ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: panelId }, CanvasPage));
                 ctx.effect(() => ctx.sidebarRightTabs.register({
-                    id: panelId, kind: panelId, title: () => "WhaleDraw",
+                    id: panelId, kind: panelId, title: () => "WhaleDraw", keepMounted: true,
                     guide: [{ id: "canvas", order: 40, title: () => "WhaleDraw", description: () => "在聊天旁打开画布并连接 Agent", icon: CanvasIcon }],
                 }));
                 ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({ name: "sidebar.right.pane.tab", key: panelId }, CanvasSidebarPage));
-                ctx.effect(() => ctx.sidebarRightTabs.register({ id: workbenchId, kind: workbenchId, title: () => "生图工作台" }));
+                ctx.effect(() => ctx.sidebarRightTabs.register({ id: workbenchId, kind: workbenchId, title: () => "生图工作台", keepMounted: true }));
                 ctx.slots.inject("sidebar.right.pane.tab", () => ctx.slots.register({ name: "sidebar.right.pane.tab", key: workbenchId }, CanvasSidebarPage));
                 ctx.slots.inject("sidebar.panellist", () => ctx.slots.register(
                     { name: "sidebar.panellist", id: panelId, order: 21, label: () => "WhaleDraw" },
                     CanvasIcon,
                 ));
                 ctx.effect(() => {
-                    let events;
-                    const connect = () => {
-                        events?.close();
-                        const sessionId = ctx.sidebarRight.mounted.getSnapshot();
-                        if (!sessionId) return;
-                        events = new EventSource(`${appPath}/host-events?sessionId=${encodeURIComponent(sessionId)}`);
-                        events.addEventListener("inspect-canvas", (event) => {
-                            const request = JSON.parse(event.data);
-                            if (ctx.sidebarRight.mounted.getSnapshot() !== sessionId) return;
-                            const visible = [...sidebarFrames.entries()].filter(([, frame]) => frame.sessionId === sessionId && frame.visibility.current);
-                            const selected = visible.find(([element]) => element === document.activeElement) || visible.find(([element]) => element === focusedFrame) || visible.at(-1);
-                            if (selected) selected[1].inspect(request);
-                            else void reportOpen(sessionId, { requestId: request.requestId, mode: "none" });
-                        });
-                        events.addEventListener("open-canvas", (event) => {
-                            const params = JSON.parse(event.data);
-                            if (ctx.sidebarRight.mounted.getSnapshot() !== sessionId) return;
-                            try { ctx.sidebarRight.openTab(params.mode === "workbench" ? workbenchId : panelId, { params }); }
-                            catch (error) { void reportOpen(sessionId, { requestId: params.requestId, error: error.message }); }
-                        });
+                    const unsubscribe = ctx.sidebarRight.mounted.subscribe(syncHosts);
+                    syncHosts();
+                    return () => {
+                        unsubscribe();
+                        sessionHosts.forEach((events) => events.close());
+                        sessionHosts.clear();
                     };
-                    const unsubscribe = ctx.sidebarRight.mounted.subscribe(connect);
-                    connect();
-                    return () => { unsubscribe(); events?.close(); };
                 });
             },
         };

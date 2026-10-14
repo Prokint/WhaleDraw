@@ -6,7 +6,7 @@ import { randomId } from "@/lib/utils";
 import i18n from "@/i18n";
 import { activateAgentClient, postState, postToolResult } from "@/services/api/canvas-agent";
 import { useAgentStore, type AgentPendingToolCall } from "@/stores/use-agent-store";
-import { flushCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { canvasStorageChanged, flushCanvasStorage, reloadCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 
 type BridgeConfig = { url: string; token: string };
 
@@ -37,6 +37,7 @@ export function DshCanvasBridge() {
         let selectionStarted = false;
         let reportingReady = false;
         let choosingProject = false;
+        let reloading = false;
         const reportPrepare = (result: { clientId?: string; projectId?: string; error?: string }) => {
             if (!prepareRequestId || disposed) return;
             window.parent.postMessage({ type: "dsh-infinite-canvas:prepared", requestId: prepareRequestId, ...result }, window.location.origin);
@@ -46,7 +47,7 @@ export function DshCanvasBridge() {
             const snapshot = useAgentStore.getState().canvasContext?.snapshot;
             const workbench = prepareMode === "workbench";
             const pageReady = workbench ? route.current === "/image" && !snapshot : snapshot && snapshot.projectId === preparedProjectId && route.current === `/canvas/${preparedProjectId}`;
-            if (!prepareRequestId || !config || !useAgentStore.getState().connected || !pageReady || reportingReady) return;
+            if (!prepareRequestId || !config || !useAgentStore.getState().connected || !pageReady || reportingReady || reloading) return;
             reportingReady = true;
             const requestId = prepareRequestId;
             const posted = await (workbench ? Promise.resolve() : flushCanvasStorage()).then(() => postState(config!.url, config!.token, clientId, workbench ? null : snapshot!)).catch(() => false);
@@ -74,7 +75,7 @@ export function DshCanvasBridge() {
         };
         const prepareProject = () => {
             reportInspections();
-            if (!prepareRequestId || choosingProject) return;
+            if (!prepareRequestId || choosingProject || reloading) return;
             const store = useCanvasStore.getState();
             if (!store.hydrated) return;
             if (prepareMode === "workbench") { void completePrepare(); return; }
@@ -119,6 +120,20 @@ export function DshCanvasBridge() {
             existingProjectIds = new Set();
             selectionPrepared = false;
             selectionStarted = false;
+            // 后台会话的画布正文停在自己的内存副本上；其他页面改过磁盘时先重新加载，避免用旧副本覆盖对方的改动。
+            if (event.data.background === true && prepareMode !== "workbench") {
+                reloading = true;
+                const reload = async () => {
+                    if (await canvasStorageChanged().catch(() => false)) {
+                        // 先放下旧上下文，确保本次连接只可能用重新加载后的画布状态完成。
+                        useAgentStore.getState().setCanvasContext(null);
+                        await reloadCanvasStorage().catch(() => {});
+                    }
+                    reloading = false;
+                    prepareProject();
+                };
+                void reload();
+            }
             const { connectError } = useAgentStore.getState();
             if (connectError) reportPrepare({ error: connectError });
             else if (prepareMode === "workbench") { navigate("/image"); prepareProject(); }
@@ -164,6 +179,7 @@ export function DshCanvasBridge() {
                     if (!context) throw new Error("请先打开画布");
                     const snapshot = context.applyOps(call.input?.ops || []);
                     result = snapshot;
+                    await flushCanvasStorage();
                     await postState(bridge.url, bridge.token, clientId, snapshot);
                 } else if (call.name.startsWith("canvas_") && call.name !== "canvas_create_attachment_nodes") {
                     const snapshot = useAgentStore.getState().canvasContext?.snapshot;

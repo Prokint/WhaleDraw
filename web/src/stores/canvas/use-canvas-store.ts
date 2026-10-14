@@ -46,20 +46,41 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
 let pendingPersistValue: StorageValue<CanvasStore> | null = null;
 let persistWrite = Promise.resolve();
+/** 本页面最后一次读写的画布库原文，用来判断其他页面是否改过磁盘上的内容。 */
+let knownRaw: string | null = null;
 
 export function flushCanvasStorage() {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
     const value = pendingPersistValue;
     pendingPersistValue = null;
-    if (value) persistWrite = persistWrite.then(() => localForageStorage.setItem(CANVAS_STORE_KEY, JSON.stringify(value)));
+    if (value) {
+        const raw = JSON.stringify(value);
+        persistWrite = persistWrite.then(() => localForageStorage.setItem(CANVAS_STORE_KEY, raw)).then(() => { knownRaw = raw; });
+    }
     return persistWrite;
+}
+
+/** 磁盘上的画布库是否已被其他页面改写。 */
+export async function canvasStorageChanged() {
+    return (await localForageStorage.getItem(CANVAS_STORE_KEY)) !== knownRaw;
+}
+
+/** 丢弃当前页面的内存副本，重新从 IndexedDB 读取画布库；后台会话在操作画布前用它对齐磁盘状态。 */
+export async function reloadCanvasStorage() {
+    useCanvasStore.setState({ hydrated: false });
+    try {
+        await useCanvasStore.persist.rehydrate();
+    } finally {
+        useCanvasStore.setState({ hydrated: true });
+    }
 }
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
         const value = await localForageStorage.getItem(name);
         if (!value) return null;
+        knownRaw = value;
         const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
         queuedPersistState = parsed.state as PersistedCanvasState;
         return parsed;
