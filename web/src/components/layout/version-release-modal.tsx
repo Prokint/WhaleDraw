@@ -1,11 +1,11 @@
 import { useEffect, useState, type CSSProperties } from "react";
-import { App, Button, Modal, Tag, Timeline } from "antd";
+import { App, Button, Modal, Progress, Tag, Timeline } from "antd";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useVersionCheck } from "@/hooks/use-version-check";
 import { APP_VERSION, IS_DSH_PLUGIN } from "@/constant/env";
-import { RELEASE_REPOSITORY } from "@/services/api/releases";
-import { fetchPluginUpdateInfo, installPluginUpdate, type PluginUpdateInfo } from "@/services/api/dsh-updates";
+import { RELEASE_REPOSITORY, RELEASE_SOURCE_URL } from "@/services/api/releases";
+import { cancelPluginUpdate, fetchPluginUpdateInfo, installPluginUpdate, type PluginUpdateInfo, type PluginUpdateProgress } from "@/services/api/dsh-updates";
 import { flushCanvasStorage } from "@/stores/canvas/use-canvas-store";
 
 function getTagColor(type: string) {
@@ -26,6 +26,31 @@ type VersionReleaseModalProps = {
     style?: CSSProperties;
 };
 
+function UpdateProgress({ progress, cancelling = false }: { progress: PluginUpdateProgress; cancelling?: boolean }) {
+    const { t } = useTranslation();
+    const completed = progress.stage === "completed";
+    const downloaded = progress.stage === "downloading" && progress.totalBytes ? Math.min(1, (progress.receivedBytes || 0) / progress.totalBytes) : 0;
+    const percent = completed ? 100 : progress.totalSteps ? ((progress.completedSteps || 0) + downloaded) / progress.totalSteps * 100 : 0;
+    const label = t(`version.progressStages.${progress.stage}`);
+    const cancellingNow = cancelling && !["completed", "cancelled", "failed"].includes(progress.stage);
+    return (
+        <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3 text-sm" role="status">
+                <span>{label}</span>
+                {progress.totalSteps ? <span className="shrink-0 text-xs opacity-60">{t("version.progressSteps", { done: completed ? progress.totalSteps : progress.completedSteps || 0, total: progress.totalSteps })}</span> : null}
+            </div>
+            <Progress aria-label={t("version.progressLabel")} percent={percent} size="small" showInfo={false} status={completed ? "success" : progress.stage === "failed" ? "exception" : progress.stage === "cancelled" ? "normal" : "active"} />
+            {progress.stage === "downloading" && progress.receivedBytes !== undefined ? (
+                <p className="text-xs tabular-nums opacity-60">
+                    {(progress.receivedBytes / 1024 / 1024).toFixed(2)} MB
+                    {progress.totalBytes ? ` / ${(progress.totalBytes / 1024 / 1024).toFixed(2)} MB · ${Math.floor(downloaded * 100)}%` : ""}
+                </p>
+            ) : null}
+            {cancellingNow || progress.disconnected ? <p className="text-xs opacity-60">{t(cancellingNow ? "version.cancelWaiting" : "version.progressDisconnected")}</p> : null}
+        </div>
+    );
+}
+
 export function VersionReleaseModal({ className, style }: VersionReleaseModalProps) {
     const { t } = useTranslation();
     const { open, setOpen, openReleaseModal, latestVersion, releases, checking, hasNewVersion, checkLatestRelease, error } = useVersionCheck();
@@ -33,6 +58,7 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
     const [updateInfo, setUpdateInfo] = useState<PluginUpdateInfo | null>(null);
     const [updateError, setUpdateError] = useState("");
     const [updating, setUpdating] = useState(false);
+    const [updateProgress, setUpdateProgress] = useState<PluginUpdateProgress | null>(null);
     useEffect(() => {
         if (!open || checking || !IS_DSH_PLUGIN || error) return;
         const controller = new AbortController();
@@ -45,21 +71,54 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
     }, [open, checking, latestVersion, error, t]);
     const update = () => {
         if (!updateInfo?.available || updating) return;
-        modal.confirm({
+        let started = false, submitted = false, cancelRequested = false;
+        let currentProgress: PluginUpdateProgress = { stage: "saving" };
+        const showProgress = (progress: PluginUpdateProgress) => {
+            if (!started) return;
+            currentProgress = progress;
+            setUpdateProgress(progress);
+            confirmation.update({ content: <UpdateProgress progress={progress} cancelling={cancelRequested} /> });
+        };
+        const confirmation = modal.confirm({
             title: t("version.installConfirm", { version: `v${updateInfo.version}` }),
             content: t("version.installDescription"),
             okText: t("version.installNow"), cancelText: t("common.cancel"),
+            onCancel(close) {
+                if (!started) { close(); return; }
+                if (cancelRequested) return;
+                cancelRequested = true;
+                confirmation.update({ cancelText: t("version.cancelling"), cancelButtonProps: { disabled: true } });
+                showProgress(currentProgress);
+                if (submitted) void cancelPluginUpdate(updateInfo).catch((reason) => {
+                    if (!started) return;
+                    cancelRequested = false;
+                    const error = reason instanceof Error ? reason.message : t("version.cancelFailed");
+                    confirmation.update({ cancelText: t("common.cancel"), cancelButtonProps: { disabled: false }, content: <div className="space-y-2"><UpdateProgress progress={currentProgress} /><p className="text-xs opacity-60">{error}</p></div> });
+                    setUpdateError(error);
+                });
+            },
             async onOk() {
+                started = true;
                 setUpdating(true);
                 setUpdateError("");
+                confirmation.update({ keyboard: false });
+                showProgress({ stage: "saving" });
                 try {
                     await flushCanvasStorage();
-                    await installPluginUpdate(updateInfo);
+                    if (cancelRequested) { showProgress({ stage: "cancelled" }); message.info(t("version.cancelled")); return; }
+                    submitted = true;
+                    showProgress({ stage: "checking" });
+                    const result = await installPluginUpdate(updateInfo, showProgress);
+                    setUpdateError("");
+                    if ("cancelled" in result) { showProgress({ ...currentProgress, stage: "cancelled", disconnected: false }); message.info(t("version.cancelled")); return; }
+                    showProgress({ ...currentProgress, stage: "completed", disconnected: false });
                     setUpdateInfo({ ...updateInfo, available: false, installed: true });
                     message.success(t("version.installedRestart"));
                 } catch (reason) {
+                    showProgress({ ...currentProgress, stage: "failed", disconnected: false });
                     setUpdateError(reason instanceof Error ? reason.message : t("version.installFailed"));
                 } finally {
+                    started = false;
                     setUpdating(false);
                 }
             },
@@ -102,7 +161,7 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                     </div>
                 </div>
                 <p className="mb-4 text-xs text-stone-500 dark:text-stone-400">
-                    {t("version.source")}: <a href={`https://github.com/${RELEASE_REPOSITORY}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">{RELEASE_REPOSITORY}</a>
+                    {t("version.source")}: <a href={RELEASE_SOURCE_URL || `https://github.com/${RELEASE_REPOSITORY}`} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">{RELEASE_SOURCE_URL || RELEASE_REPOSITORY}</a>
                 </p>
                 {error ? <p role="status" className="mb-4 text-xs text-stone-500 dark:text-stone-400">{error} {t("version.localFallback")}</p> : null}
                 <div className="mb-5 flex items-center gap-3">
@@ -113,6 +172,7 @@ export function VersionReleaseModal({ className, style }: VersionReleaseModalPro
                         {updateError || (!IS_DSH_PLUGIN ? t("version.pluginOnly") : updateInfo?.installed ? t("version.installedRestart") : updateInfo?.reason || (updating ? t("version.installing") : ""))}
                     </p>
                 </div>
+                {updateProgress ? <div className="mb-5"><UpdateProgress progress={updateProgress} /></div> : null}
                 <div className="max-h-[56vh] overflow-y-auto pr-2">
                     <Timeline
                         items={releases.map((release) => ({
