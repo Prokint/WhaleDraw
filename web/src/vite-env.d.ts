@@ -4,6 +4,7 @@ declare const __APP_VERSION__: string;
 declare const __APP_RELEASES__: import("@/lib/release").ReleaseInfo[];
 
 interface ImportMetaEnv {
+    readonly VITE_UPDATE_SOURCE?: string;
     // Comma-separated local development plugin URLs, refetched on every startup without caching or persistence.
     readonly VITE_DEV_PLUGINS?: string;
     // Optional build-time analytics configuration, with one independent variable per provider.

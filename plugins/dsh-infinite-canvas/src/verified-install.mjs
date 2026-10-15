@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { cp, lstat, mkdir, readFile, readdir, readlink, realpath, rename, unlink } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, readdir, readlink, realpath, rename, stat, symlink, unlink } from "node:fs/promises";
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import { c as pack, t as list, x as extract } from "tar";
 
 const packageName = "dsh-infinite-canvas";
+const backupOptions = {
+    gzip: true, follow: false, strict: true, sync: true,
+    // Windows 文件编号超出 Number 精度时会被误判为硬链接，备份改为逐文件保存。
+    filter(_path, stat) { if (process.platform === "win32") stat.nlink = 1; return true; },
+};
 
 async function streamHash(stream) {
     const hash = createHash("sha256");
@@ -114,7 +119,8 @@ async function readPackage(file, version, directory) {
 }
 
 // 使用原生 change 的写锁包住备份、pnpm、文件复查和回滚，不另外启动安装器。
-export async function installVerifiedBundle(manager, file, version, directory) {
+export async function installVerifiedBundle(manager, file, version, directory, signal, onProgress = () => {}) {
+    signal?.throwIfAborted();
     if (!["change", "installBundle", "readRestoredFiles", "restoreFiles"].every((key) => typeof manager[key] === "function")) {
         throw new Error("当前 DSH 不支持安全更新事务，尚未执行安装。请升级 DSH 后重试。");
     }
@@ -122,15 +128,19 @@ export async function installVerifiedBundle(manager, file, version, directory) {
     directory = await realpath(directory);
     if (!inside(join(profile, ".plugin-manager", "downloads"), directory)) throw new Error("更新工作目录无效，尚未执行安装。");
     const expected = await readPackage(file, version, directory);
+    signal?.throwIfAborted();
     const modules = join(profile, "node_modules");
     const target = join(modules, packageName);
     const previous = join(directory, "previous-node_modules");
     const change = manager.change;
     let intercepted = false;
+    onProgress("waiting");
     manager.change = function (operation, request, reason) {
         if (request.stage !== "install" || request.target !== file) return change.call(this, operation, request, reason);
         intercepted = true;
         return change.call(this, async (result) => {
+            if (signal?.aborted) return "cancelled";
+            onProgress("backing-up");
             await assertNoInterruptedUpdate(join(profile, ".plugin-manager", "downloads"));
             const runRecord = join(profile, ".plugin-manager", "run.json");
             // 原生运行检查发生在 runPnpm 内，不能等移动依赖后才发现遗留进程。
@@ -144,8 +154,9 @@ export async function installVerifiedBundle(manager, file, version, directory) {
             const externalSource = original.isSymbolicLink() && !inside(modules, source);
             const before = await inventory(modules);
             const sourceBefore = externalSource ? await inventory(source) : null;
+            if (signal?.aborted) return "cancelled";
             const dependencyArchive = join(directory, "dependencies-backup.tgz");
-            await pack({ file: dependencyArchive, cwd: modules, gzip: true, follow: false, strict: true, sync: true }, ["."]);
+            await pack({ ...backupOptions, file: dependencyArchive, cwd: modules }, ["."]);
             if (await archiveInventory(dependencyArchive) !== before || await inventory(modules) !== before) throw new Error("旧依赖归档复查不一致，已停止更新。");
             const dependencyArchiveSHA = await streamHash(createReadStream(dependencyArchive));
             const files = await this.readRestoredFiles();
@@ -161,33 +172,48 @@ export async function installVerifiedBundle(manager, file, version, directory) {
             }, null, 2)]]));
             if (externalSource) {
                 const copy = join(directory, "source-backup.tgz");
-                await pack({ file: copy, cwd: source, gzip: true, follow: false, strict: true, sync: true }, ["."]);
+                await pack({ ...backupOptions, file: copy, cwd: source }, ["."]);
                 if (await archiveInventory(copy) !== sourceBefore || await inventory(source) !== sourceBefore) throw new Error("源码备份复查不一致，已停止更新。");
                 sourceArchiveSHA = await streamHash(createReadStream(copy));
             }
             await saveJournal("prepared");
+            if (signal?.aborted) return "cancelled";
             // 保留旧树后重建独立副本，原生兼容性检查仍需读取安装前的依赖。
             try { await rename(modules, previous); }
             catch (error) { throw new Error(`无法保留旧依赖目录，可能被运行任务占用；尚未执行安装。${error.message}`); }
             try {
                 await saveJournal("installing");
+                signal?.throwIfAborted();
+                onProgress("preparing");
                 await mkdir(modules);
-                await extract({ file: dependencyArchive, cwd: modules, strict: true });
+                // tar 无法在普通 Windows 权限下重建 junction，链接按已校验清单单独恢复。
+                await extract({ file: dependencyArchive, cwd: modules, strict: true, filter: (_path, entry) => entry.type !== "SymbolicLink" });
+                for (const [path, [type, link]] of JSON.parse(before)) if (type === "link") {
+                    const kind = process.platform === "win32" ? ((await stat(join(previous, path))).isDirectory() ? "junction" : "file") : undefined;
+                    await symlink(link, join(modules, path), kind);
+                }
                 if (await inventory(modules) !== before) throw new Error("待更新依赖副本复查失败。");
                 if (original.isSymbolicLink()) {
                     // 不把源码链接交给 pnpm；普通副本不包含本地依赖或嵌套链接。
                     await unlink(target);
                     await cp(source, target, { recursive: true, filter: async (path) => path !== join(source, "node_modules") && !(await lstat(path)).isSymbolicLink() });
                 }
+                signal?.throwIfAborted();
+                onProgress("installing");
                 const application = await operation(result);
+                signal?.throwIfAborted();
+                onProgress("checking-files");
                 if (!["applied", "restart-required"].includes(application) || result.bundle !== packageName) throw new Error("DSH 未确认安装成功。");
                 const installed = await exists(target);
                 if (!installed || !inside(modules, await realpath(target))) throw new Error("新插件安装目录异常。");
                 if (await inventory(target, true) !== expected) throw new Error("安装后文件复查失败：文件缺失、被修改或多出文件。");
                 if (await inventory(previous) !== before || (externalSource && await inventory(source) !== sourceBefore)) throw new Error("旧依赖或源码完整性复查失败。");
+                signal?.throwIfAborted();
                 await saveJournal("installed");
+                signal?.throwIfAborted();
                 return application;
             } catch (error) {
+                onProgress("rolling-back");
                 try {
                     // 异常的新目录也保留供调查；不用递归删除完成回滚。
                     if (await exists(modules)) await rename(modules, join(directory, "failed-node_modules"));
@@ -206,6 +232,7 @@ export async function installVerifiedBundle(manager, file, version, directory) {
                     await saveJournal("rollback-incomplete").catch(() => {});
                     throw new Error(`${error.message} 回滚未完整完成：${rollbackError.message}。备份保留在 ${directory}，请勿继续更新。`);
                 }
+                if (signal?.aborted && error === signal.reason) return "cancelled";
                 throw new Error(`${error.message} 已回滚旧插件与配置；备份保留在 ${directory}。`);
             }
         }, request, reason);

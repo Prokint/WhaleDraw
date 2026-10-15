@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { cp, link, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -129,8 +130,10 @@ for (const failure of ["安装器抛错", "文件缺失", "文件篡改", "多�
     const f = await fixture(t);
     const before = await readFile(join(f.profile, "package.json"), "utf8");
     const install = f.manager.installBundle;
+    let entered = false;
     f.manager.installBundle = function (file) {
         return this.change(async (result) => {
+            entered = true;
             await f.installFiles();
             await writeFile(join(f.profile, "package.json"), "错误配置");
             result.bundle = name;
@@ -143,6 +146,7 @@ for (const failure of ["安装器抛错", "文件缺失", "文件篡改", "多�
     };
     const { file, directory } = await f.build("1.0.1");
     const result = await installVerifiedBundle(f.manager, file, "1.0.1", directory);
+    assert.equal(entered, true, "必须真正执行安装，不能将备份阶段的失败当成回滚验收");
     assert.equal(result.application, "failed");
     assert.match(result.error.diagnostic, /已回滚/);
     assert.equal(JSON.parse(await readFile(join(directory, "recovery.json"))).status, "rolled-back");
@@ -258,24 +262,47 @@ test("安装包中的目录链接在安装前拒绝", async (t) => {
     assert.equal(await realpath(join(f.modules, name)), await realpath(f.source));
 });
 
-test("配置恢复失败会记录阻断状态并保留配置快照", async (t) => {
+for (const cancelled of [false, true]) test(`${cancelled ? "取消后" : ""}配置恢复失败会记录阻断状态并保留配置快照`, async (t) => {
     const f = await fixture(t);
+    const controller = new AbortController();
     const restore = f.manager.restoreFiles;
     f.manager.restoreFiles = async function (files) {
         if (files.has(join(f.profile, "package.json"))) throw new Error("模拟配置恢复失败");
         return restore.call(this, files);
     };
     f.manager.installBundle = function (file) {
-        return this.change(async () => { throw new Error("模拟安装失败"); }, { stage: "install", target: file });
+        return this.change(async () => {
+            if (cancelled) { controller.abort(new DOMException("已取消更新", "AbortError")); controller.signal.throwIfAborted(); }
+            throw new Error("模拟安装失败");
+        }, { stage: "install", target: file });
     };
     const { file, directory } = await f.build("1.0.1");
-    const result = await installVerifiedBundle(f.manager, file, "1.0.1", directory);
+    const result = await installVerifiedBundle(f.manager, file, "1.0.1", directory, controller.signal);
     assert.equal(result.application, "failed");
     assert.match(result.error.diagnostic, /回滚未完整完成/);
     const record = JSON.parse(await readFile(join(directory, "recovery.json")));
     assert.equal(record.status, "rollback-incomplete");
     assert.ok(record.files.some(([path, text]) => path === join(f.profile, "package.json") && text));
     assert.equal(await realpath(join(f.modules, name)), await realpath(f.source));
+});
+
+test("原生安装执行后收到取消会完整回滚依赖与配置", nativeOptions, async (t) => {
+    const f = await fixture(t, true);
+    const saved = await f.manager.readRestoredFiles();
+    const controller = new AbortController();
+    const run = f.manager.runPnpm;
+    f.manager.runPnpm = async function (...args) {
+        const result = await run.apply(this, args);
+        assert.equal(result.exitCode, 0, result.output);
+        controller.abort(new DOMException("已取消更新", "AbortError"));
+        return result;
+    };
+    const { file, directory } = await f.build("1.0.1");
+    const result = await installVerifiedBundle(f.manager, file, "1.0.1", directory, controller.signal);
+    assert.equal(result.application, "cancelled", JSON.stringify(result));
+    for (const [file, text] of saved) assert.equal(await readFile(file, "utf8"), text);
+    assert.equal(await realpath(join(f.modules, name)), await realpath(f.source));
+    assert.equal(JSON.parse(await readFile(join(directory, "recovery.json"))).status, "rolled-back");
 });
 
 test("旧依赖文件被改动时从独立归档恢复，外部源码不被覆盖", async (t) => {
@@ -300,13 +327,16 @@ test("DSH 原生事务：pnpm 失败后完整恢复依赖树、manifest 和锁�
     const f = await fixture(t, true);
     const saved = await f.manager.readRestoredFiles();
     const run = f.manager.runPnpm;
+    let entered = false;
     f.manager.runPnpm = async function (args) {
+        entered = true;
         const result = await run.call(this, args);
         assert.equal(result.exitCode, 0, result.output);
         return { ...result, exitCode: 1, output: "模拟 pnpm 安装失败" };
     };
     const { file, directory } = await f.build("1.0.1");
     const result = await installVerifiedBundle(f.manager, file, "1.0.1", directory);
+    assert.equal(entered, true, "必须进入真实 pnpm 安装后才验证失败回滚");
     assert.equal(result.application, "failed");
     assert.match(result.error.diagnostic, /已回滚/);
     for (const [file, text] of saved) assert.equal(await readFile(file, "utf8"), text);
@@ -349,4 +379,28 @@ test("旧依赖含多目录硬链接和空文件时完成归档复查与安装",
     assert.equal(await readFile(join(directory, "previous-node_modules/empty.txt"), "utf8"), "");
     assert.equal(JSON.parse(await readFile(join(directory, "recovery.json"))).status, "installed");
     assert.equal(await readFile(join(f.source, "keep.txt"), "utf8"), "源码必须保留");
+});
+
+test("Windows 文件编号精度碰撞不会把不同内容归档为同一硬链接", { skip: process.platform !== "win32" }, async (t) => {
+    const f = await fixture(t);
+    const paths = [join(f.modules, "first.txt"), join(f.modules, "second.txt")];
+    for (const [index, path] of paths.entries()) {
+        await writeFile(path, `不同内容 ${index}`);
+        await link(path, join(f.root, `alias-${index}.txt`));
+    }
+    const { file, directory } = await f.build("1.0.1");
+    const lstatSync = fs.lstatSync;
+    let collisions = 0;
+    t.mock.method(fs, "lstatSync", function (path, options) {
+        const stat = lstatSync.call(this, path, options);
+        if (paths.some((file) => file.replaceAll("\\", "/") === String(path).replaceAll("\\", "/"))) {
+            stat.ino = Number(29554872555053040n);
+            collisions++;
+        }
+        return stat;
+    });
+    const result = await installVerifiedBundle(f.manager, file, "1.0.1", directory);
+    assert.ok(collisions >= 2, "必须让 tar 实际读到两个相同的有损文件编号");
+    assert.equal(result.application, "restart-required", JSON.stringify(result));
+    for (const [index, path] of paths.entries()) assert.equal(await readFile(path, "utf8"), `不同内容 ${index}`);
 });
