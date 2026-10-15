@@ -5,6 +5,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- v0.2.3 发版：统一应用与 DSH 插件版本，整理更新备份修复、取消及实时进度条的版本记录，保留空的 Unreleased。插件 README 与 Release 说明补充 v0.2.2 及更早客户端首次升级步骤，要求退出宿主、保留 profile 备份，源码 link 不直接交给 CLI 替换，未完成恢复记录不绕过。此前测试与 3180 本地假版本验收不代表正式发布包已验收；本次发版不执行本地编译、测试或构建，正式包在独立 profile 的首次升级与 Electron 宿主仍待验证。
+
 - 3180 假版本完整更新复验：此前测试宿主继承离线安装环境变量，pnpm 安全检查缺少 registry 元数据而以 `ERR_PNPM_NO_OFFLINE_META` 失败并回滚至 v0.2.3。取消测试宿主的离线限制后，实际 HTTP 更新接口返回 installed=true、version=0.2.4、restartRequired=true，SSE 经过备份、安装、逐文件复查后才报告 completed，磁盘包和前端构建标识均为 v0.2.4；重启后实际浏览器弹窗确认当前和最新版本均为 v0.2.4，重复安装被禁用。正式 GitHub 更新源及发布内容未改动。
 
 - 3180 本地更新预览：独立 DSH profile 从测试包 v0.2.3 更新到本地 HTTP 源提供的假版本 v0.2.4，保留真实 SHA-256、包版本及安装后逐文件校验。前端使用构建变量 `VITE_UPDATE_SOURCE` 读取测试 VERSION 与 CHANGELOG，未设置时仍读取正式仓库；仅临时测试包的服务端 Release 地址改为本地，源码正式下载白名单不变。测试源每 250 毫秒发送 64 KiB，方便观察下载与取消，正式更新器没有新增限速。已确认 MCP 子进程位于测试 profile，实际下载中取消成功且 v0.2.4 仍可安装；已补充真实更新接口完整安装和重启复验，服务资源及构建版本均为 v0.2.4，同版本重复安装被拒绝。根 VERSION、GitHub Release 与默认 DSH profile 未修改。
