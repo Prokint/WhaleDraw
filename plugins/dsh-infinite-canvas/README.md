@@ -7,7 +7,10 @@ WhaleDraw 基于 [Infinite Canvas](https://github.com/basketikun/infinite-canvas
 在本仓库中先安装前端依赖，然后构建插件：
 
 ```powershell
-cd web
+cd canvas-agent
+npm ci
+npm run build
+cd ../web
 npm ci
 cd ../plugins/dsh-infinite-canvas
 pnpm install --frozen-lockfile --no-optional
@@ -26,13 +29,13 @@ $version = (Get-Content ../../VERSION -Raw).Trim().TrimStart('v')
 Move-Item -LiteralPath "dist/dsh-infinite-canvas-$version.tgz" -Destination "dist/whaledraw-$version.tgz"
 ```
 
-构建会先从根目录 `VERSION` 同步包版本，pnpm 按内部包名生成压缩包后，仅将文件名改为 `dist/whaledraw-<版本号>.tgz`；Release 工作流执行相同改名。应用与 DSH 安装包使用同一个版本号；配套 `whaledraw-canvas-agent` 使用独立版本号，由本仓库同一个 Release 分发。工作流先上传 Agent，再安装依赖并构建插件；本地构建需先有对应 Release 的 Agent 附件。也可以在完成构建后执行 `npm pack --pack-destination dist`，由 `prepack` 重新构建，再按上面的命令改名。接收方执行：
+构建会先从根目录 `VERSION` 同步包版本，pnpm 按内部包名生成压缩包后，仅将文件名改为 `dist/whaledraw-<版本号>.tgz`；Release 工作流执行相同改名。应用与 DSH 安装包使用同一个版本号；配套 Agent 使用独立版本号，构建时把已编译的程序、包元数据和提示词一并放入 `dist/agent`。独立 Agent 包仍在同一 Release 分发，DSH 安装不再依赖该 GitHub 附件。也可以在完成构建后执行 `npm pack --pack-destination dist`，由 `prepack` 重新构建，再按上面的命令改名。接收方执行：
 
 ```powershell
 dsh plugin --profile desktop add "file:<安装包的绝对路径>"
 ```
 
-安装器会安装静态服务依赖 `sirv` 与本仓库 Release 的配套 Canvas Agent 包。运行时由 DSH 的 `webServer` 提供插件自带的静态资源，无需 Vite 或额外前端端口。插件原生注册画布工具并调用 Canvas Agent 的 DSH 专用通道，不再启动独立 MCP 工具进程；工具名称保留现有前缀，调用身份由宿主管理，不混入模型参数。每个窗口复用一条宿主事件流承载前后台会话，成功连接后固定所属窗口，其他窗口保留的后台副本不会接走请求。构建产物位于 `dist/app`，属于忽略文件；安装源码目录前必须完成构建。缺少产物时插件会明确报错。
+安装器只需安装静态服务和 Agent 的常规 registry 依赖，配套 Agent 程序已包含在 DSH 安装包中。运行时由 DSH 的 `webServer` 提供插件自带的静态资源，无需 Vite 或额外前端端口。插件原生注册画布工具并调用 Canvas Agent 的 DSH 专用通道，不再启动独立 MCP 工具进程；工具名称保留现有前缀，调用身份由宿主管理，不混入模型参数。每个窗口复用一条宿主事件流承载前后台会话，成功连接后固定所属窗口，其他窗口保留的后台副本不会接走请求。构建产物位于 `dist/app`，属于忽略文件；安装源码目录前必须完成构建。缺少产物时插件会明确报错。
 
 ## 使用与数据
 

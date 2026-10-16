@@ -1,1 +1,1 @@
-import "whaledraw-canvas-agent";
+import "../dist/agent/dist/index.js";

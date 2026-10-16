@@ -14,6 +14,7 @@
   "files": [
     "src",
     "dist/app",
+    "dist/agent",
     "cordis.yml",
     "LICENSE",
     "README.md"
@@ -23,11 +24,18 @@
     "prepack": "node scripts/build.mjs"
   },
   "dependencies": {
-    "whaledraw-canvas-agent": "https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@openai/codex": "0.146.0",
+    "express": "^5.1.0",
+    "gray-matter": "^4.0.3",
     "semver": "^7.8.5",
     "sirv": "^3.0.2",
+    "strip-ansi": "7.2.0",
     "tar": "7.5.22",
-    "zod": "3.25.76"
+    "winston": "^3.19.0",
+    "yaml": "^2.9.0",
+    "zod": "3.25.76",
+    "zod-to-json-schema": "3.25.2"
   },
   "engines": {
     "node": ">=22.19.0"

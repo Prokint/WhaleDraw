@@ -2,6 +2,9 @@ import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import "../../../scripts/sync-version.mjs";
+import { bundleAgent } from "./bundle-agent.mjs";
+
+await bundleAgent();
 
 const webRoot = new URL("../../../web/", import.meta.url);
 const require = createRequire(new URL("package.json", webRoot));

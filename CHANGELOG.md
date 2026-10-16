@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [修复] DSH 安装包内置配套 Agent 程序，避免安装阶段再次访问 GitHub 下载 Agent、反复重试而长时间停留在第五步。
+
 ## v0.2.4
 
 + [调整] 配套 Canvas Agent 改由 WhaleDraw 仓库独立管理，与 DSH 插件在同一 Release 分发并固定版本安装。

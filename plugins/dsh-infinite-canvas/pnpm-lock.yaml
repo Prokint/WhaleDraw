@@ -8,21 +8,42 @@ importers:
 
   .:
     dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.12.1
+        version: 1.32.1(zod@3.25.76)
+      '@openai/codex':
+        specifier: 0.146.0
+        version: 0.146.0
+      express:
+        specifier: ^5.1.0
+        version: 5.2.1
+      gray-matter:
+        specifier: ^4.0.3
+        version: 4.0.3
       semver:
         specifier: ^7.8.5
         version: 7.8.5
       sirv:
         specifier: ^3.0.2
         version: 3.0.2
+      strip-ansi:
+        specifier: 7.2.0
+        version: 7.2.0
       tar:
         specifier: 7.5.22
         version: 7.5.22
-      whaledraw-canvas-agent:
-        specifier: https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz
-        version: https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz
+      winston:
+        specifier: ^3.19.0
+        version: 3.19.0
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.1
       zod:
         specifier: 3.25.76
         version: 3.25.76
+      zod-to-json-schema:
+        specifier: 3.25.2
+        version: 3.25.2(zod@3.25.76)
 
 packages:
 
@@ -593,12 +614,6 @@ packages:
   vary@1.1.2:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
-
-  whaledraw-canvas-agent@https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz:
-    resolution: {integrity: sha512-3AFdibOOXrEjofjgsRMkovKE7RVGuPWpZyncx3WTXBUzSpT1T1vLcDF2OJbO6+V45ak8QfQAQuNu6kBfiTWZqA==, tarball: https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz}
-    version: 0.6.1
-    engines: {node: '>=18'}
-    hasBin: true
 
   which@2.0.2:
     resolution: {integrity: sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==}
@@ -1202,21 +1217,6 @@ snapshots:
   util-deprecate@1.0.2: {}
 
   vary@1.1.2: {}
-
-  whaledraw-canvas-agent@https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz:
-    dependencies:
-      '@modelcontextprotocol/sdk': 1.32.1(zod@3.25.76)
-      '@openai/codex': 0.146.0
-      express: 5.2.1
-      gray-matter: 4.0.3
-      strip-ansi: 7.2.0
-      winston: 3.19.0
-      yaml: 2.9.1
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - supports-color
 
   which@2.0.2:
     dependencies:
