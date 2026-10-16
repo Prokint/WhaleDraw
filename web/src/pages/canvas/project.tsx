@@ -157,7 +157,12 @@ export default function CanvasPage() {
     }, []);
 
     useEffect(() => {
-        if (!IS_DSH_PLUGIN || !projectId) return;
+        if (!projectId) return;
+        // 独立模式没有跨页面独占，只需记录本次访问就绪，守卫形态与 DSH 模式保持一致。
+        if (!IS_DSH_PLUGIN) {
+            setAccess({ projectId });
+            return;
+        }
         let disposed = false;
         let release: (() => void) | undefined;
         useAgentStore.getState().setAgentState({ canvasAccessError: null });
@@ -182,7 +187,7 @@ export default function CanvasPage() {
         };
     }, [projectId, attempt]);
 
-    if (IS_DSH_PLUGIN && access?.projectId === projectId && access.error) return (
+    if (access?.projectId === projectId && access.error) return (
         <main className="flex h-full flex-col items-center justify-center gap-4 bg-background p-6 text-center text-foreground" role="alert">
             <p>{access.error}</p>
             <div className="flex gap-4">
@@ -191,10 +196,11 @@ export default function CanvasPage() {
             </div>
         </main>
     );
-    if (IS_DSH_PLUGIN && access?.projectId !== projectId) return <CanvasRefreshShell />;
+    if (access?.projectId !== projectId) return <CanvasRefreshShell />;
     if (!mounted) return <CanvasRefreshShell />;
 
-    return <InfiniteCanvasPage />;
+    // key 让切换画布等于重新挂载，画布状态不会跨项目残留。
+    return <InfiniteCanvasPage key={projectId} />;
 }
 
 function measureFocusFrame(container: HTMLDivElement | null, nodeId: string) {
@@ -255,6 +261,7 @@ function InfiniteCanvasPage() {
     const addAsset = useAssetStore((state) => state.addAsset);
     const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
     const hydrated = useCanvasStore((state) => state.hydrated);
+    const storageError = useCanvasStore((state) => state.storageError);
     const createProject = useCanvasStore((state) => state.createProject);
     const openProject = useCanvasStore((state) => state.openProject);
     const updateProject = useCanvasStore((state) => state.updateProject);
@@ -285,7 +292,9 @@ function InfiniteCanvasPage() {
     const [showImageInfo, setShowImageInfo] = useState(false);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
-    const [projectLoaded, setProjectLoaded] = useState(false);
+    const [loadedProjectId, setLoadedProjectId] = useState("");
+    // 本页数据是否已经对应 projectId。切画布时它立刻变回 false，挡住拿上一个画布的 nodes/connections 回写新画布。
+    const projectReady = loadedProjectId === projectId;
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
@@ -476,7 +485,7 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!hydrated) return;
-        setProjectLoaded(false);
+        setLoadedProjectId("");
         const project = openProject(projectId);
         if (!project) {
             navigate("/canvas", { replace: true });
@@ -507,20 +516,20 @@ function InfiniteCanvasPage() {
                 showImageInfo: project.showImageInfo || false,
             };
             setHistoryState({ canUndo: false, canRedo: false });
-            setProjectLoaded(true);
+            setLoadedProjectId(projectId);
         };
         void restore();
     }, [hydrated, navigate, openProject, projectId]);
 
     useEffect(() => {
-        if (!projectLoaded) return;
+        if (!projectReady) return;
         nodesRef.current.filter(hasResumableVideoTask).forEach((node) => void pollVideoNodeTask(node, true));
         // Resume once after the current canvas is restored, not on later config identity changes.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [projectLoaded]);
+    }, [projectReady]);
 
     useEffect(() => {
-        if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;
+        if (!projectReady || applyingHistoryRef.current || historyPausedRef.current) return;
         const next = createHistoryEntry();
         const previous = lastHistoryRef.current;
         if (
@@ -551,28 +560,38 @@ function InfiniteCanvasPage() {
                 historyCommitTimerRef.current = null;
             }
         };
-    }, [activeChatId, backgroundMode, chatSessions, connections, createHistoryEntry, nodes, projectLoaded, showImageInfo]);
+    }, [activeChatId, backgroundMode, chatSessions, connections, createHistoryEntry, nodes, projectReady, showImageInfo]);
 
     useEffect(() => {
-        if (!projectLoaded || historyPausedRef.current) return;
+        if (!projectReady || historyPausedRef.current) return;
         updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
-    }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
+    }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectReady, showImageInfo, updateProject]);
 
     useEffect(() => {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
     }, [dialogNodeId]);
 
     useEffect(() => {
-        if (!projectLoaded) return;
+        if (!projectReady) return;
         if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
         viewportSaveTimerRef.current = setTimeout(() => {
-            updateProject(projectId, { viewport: viewportRef.current });
             viewportSaveTimerRef.current = null;
+            updateProject(projectId, { viewport: viewportRef.current });
         }, 500);
-        return () => {
-            if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
-        };
-    }, [projectId, projectLoaded, updateProject, viewport]);
+    }, [projectId, projectReady, updateProject, viewport]);
+
+    // 这个 effect 不能在每次 viewport 变化时清理定时器，否则切换画布时的最后一次视口变更会被丢掉。
+    // 卸载（含切画布）时直接把待写入的视口补上并立即落盘，平时清理悬挂定时器。
+    useEffect(
+        () => () => {
+            if (!viewportSaveTimerRef.current) return;
+            clearTimeout(viewportSaveTimerRef.current);
+            viewportSaveTimerRef.current = null;
+            updateProject(projectId, { viewport: viewportRef.current });
+            void flushCanvasStorage();
+        },
+        [projectId, updateProject],
+    );
 
     useLayoutEffect(() => {
         nodesRef.current = nodes;
@@ -589,7 +608,7 @@ function InfiniteCanvasPage() {
     }, [selectionBox]);
 
     useEffect(() => {
-        if (!projectLoaded) return;
+        if (!projectReady) return;
         const el = containerRef.current;
         if (!el) return;
 
@@ -602,7 +621,7 @@ function InfiniteCanvasPage() {
         const resizeObserver = new ResizeObserver(updateSize);
         resizeObserver.observe(el);
         return () => resizeObserver.disconnect();
-    }, [projectLoaded]);
+    }, [projectReady]);
 
     const screenToCanvas = useCallback((clientX: number, clientY: number) => {
         const rect = containerRef.current?.getBoundingClientRect();
@@ -830,7 +849,7 @@ function InfiniteCanvasPage() {
     }, [connections, nodeById]);
     const referenceConnectedNodeIds = useMemo(() => new Set([referencePickerNodeId, ...(referencePickerNodeId ? connectedNodesByNodeId.get(referencePickerNodeId)?.flatMap((node) => node.type === CanvasNodeType.Group ? [node.id, ...getGroupResourceNodes(node.id, nodes).map((child) => child.id)] : [node.id]) || [] : [])].filter((id): id is string => Boolean(id))), [connectedNodesByNodeId, nodes, referencePickerNodeId]);
     const { applyAgentOps } = useAgentBridge({
-        ready: projectLoaded,
+        ready: projectReady,
         projectId,
         title: currentProject?.title,
         nodes,
@@ -1243,6 +1262,24 @@ function InfiniteCanvasPage() {
             hide();
         }
     }, [message, projectId, t]);
+
+    // 本地存储写入失败时提示，并给出导出入口。固定 key 保证常驻提示同时只有一条。
+    useEffect(() => {
+        if (!storageError) return;
+        message.open({
+            key: "canvas-storage-error",
+            type: "error",
+            duration: 0,
+            content: (
+                <div className="flex flex-col gap-2">
+                    <span>{t("canvas.projectPage.storageError")}</span>
+                    <button type="button" className="cursor-pointer self-start underline" onClick={() => void exportCurrentProject()}>
+                        {t("canvas.projectPage.storageErrorAction")}
+                    </button>
+                </div>
+            ),
+        });
+    }, [exportCurrentProject, message, storageError, t]);
 
     const handleCanvasMouseDown = useCallback(
         (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -3184,7 +3221,7 @@ function InfiniteCanvasPage() {
     }
     const retainedPreview = retainedPreviewRef.current;
 
-    if (!projectLoaded) return <CanvasRefreshShell />;
+    if (!projectReady) return <CanvasRefreshShell />;
 
     return (
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
