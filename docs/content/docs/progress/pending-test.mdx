@@ -5,6 +5,8 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- 配套 Agent 安装完整性：Agent 编译和附件上传已通过，安装阶段被新版 pnpm 的缺少完整性摘要校验阻断；锁文件补入正式 Agent 附件的 SHA-512，发行工作流按本轮实际构建的安装包自动同步摘要后再安装插件依赖。已下载的 Agent 固定名与版本名附件 SHA-256 一致；修复后 CI 仍待完成。网页生产编译通过，GitHub Pages 因仓库未启用而未部署，不影响 Release 附件分发。
+
 - v0.2.4 Agent 打包修复：CI 编译发现受控画布快照可能为空，已在读取快照标题前显式排除空值；此前单元回归不能代替编译验证。首次 CI 在上传安装包前停止，正式 Agent 与 DSH 安装附件未生成，修复后的 CI 结果待确认。
 
 - v0.2.4 配套发行准备：应用与 DSH 插件同步为 0.2.4，独立 Agent 更名为 `whaledraw-canvas-agent` 并升为 0.6.1，由本仓库同一 GitHub Release 分发。DSH 依赖及锁文件固定到该标签的 Agent 附件，工作流先构建、上传 Agent 再构建插件；网页连接、Codex 插件启动命令和 Agent 更新检查同步使用本仓库分发源。合入本轮发版前的 main 回归共 198 项通过、0 失败，另有 2 项 Unix 权限测试在 Windows 跳过；本轮按发版规范未在本地执行构建或测试，新增发行源用例未运行。CI 打包、Release 附件与正式包安装尚待验收，不能用此前预览包验收代替。
