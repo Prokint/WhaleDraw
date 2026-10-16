@@ -71,10 +71,14 @@ export function ConfigLocalProxy() {
 function localProxyCommand(proxyUrl: string) {
     // Pinned to @latest because npx otherwise reuses whatever version it already cached.
     const command = `npx ${LOCAL_PROXY_PACKAGE}@latest`;
+    const args: string[] = [];
     try {
         const port = new URL(normalizeLocalProxyUrl(proxyUrl) || DEFAULT_LOCAL_PROXY_URL).port;
-        return port && port !== new URL(DEFAULT_LOCAL_PROXY_URL).port ? `${command} --port ${port}` : command;
+        if (port && port !== new URL(DEFAULT_LOCAL_PROXY_URL).port) args.push(`--port ${port}`);
     } catch {
-        return command;
+        // 端口解析失败时沿用默认地址，仍然给出可复制的命令。
     }
+    // 代理默认只接受已知来源，这里把当前页面的来源一起带上，避免照着复制的命令启动后请求全被 403。
+    if (window.location.origin !== "null") args.push(`--allow-origin ${window.location.origin}`);
+    return [command, ...args].join(" ");
 }

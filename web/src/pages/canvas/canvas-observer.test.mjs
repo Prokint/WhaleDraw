@@ -8,7 +8,7 @@ import { createServer } from "vite";
 import localforage from "localforage";
 
 test("只读查看页渲染插件节点及上游内容，不显示插件缺失", async (t) => {
-    const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] } });
+    const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true, include: [] } });
     const previousStorage = globalThis.localStorage;
     globalThis.localStorage = { getItem: () => null, setItem() {} };
     t.after(async () => { globalThis.localStorage = previousStorage; await server.close(); });
@@ -26,7 +26,7 @@ test("只读查看页渲染插件节点及上游内容，不显示插件缺失",
 });
 
 test("观察插件的查询返回副本，写入、生成、事件和持久化均不影响原状态", async (t) => {
-    const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] } });
+    const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true, include: [] } });
     const previousStorage = globalThis.localStorage;
     globalThis.localStorage = { getItem: () => null, setItem() {} };
     t.after(async () => { globalThis.localStorage = previousStorage; await server.close(); });

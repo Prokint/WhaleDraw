@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 
 test("两个窗口交错保存各自画布时保留另一窗口的新建、编辑和删除", async (t) => {
-    const servers = await Promise.all([0, 1].map(() => createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] } })));
+    const servers = await Promise.all([0, 1].map(() => createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true, include: [] } })));
     const previousStorage = globalThis.localStorage;
     globalThis.localStorage = { getItem: () => null, setItem() {} };
     t.after(async () => { t.mock.timers.reset(); globalThis.localStorage = previousStorage; await Promise.all(servers.map((server) => server.close())); });
@@ -41,8 +41,84 @@ test("两个窗口交错保存各自画布时保留另一窗口的新建、编�
     assert.equal(b.useCanvasStore.getState().openProject(idA), null);
 });
 
+test("写入失败保留待保存内容，重试时仍合并其他窗口的新画布", async (t) => {
+    const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true, include: [] } });
+    const previousStorage = globalThis.localStorage;
+    globalThis.localStorage = { getItem: () => null, setItem() {} };
+    t.after(async () => { globalThis.localStorage = previousStorage; await server.close(); });
+    let disk = null, fail = true;
+    const { localForageStorage } = await server.ssrLoadModule("/src/lib/localforage-storage.ts");
+    localForageStorage.getItem = async () => disk;
+    localForageStorage.setItem = async (_key, value) => { if (fail) throw new Error("quota full"); disk = value; };
+    const page = await server.ssrLoadModule("/src/stores/canvas/use-canvas-store.ts");
+    await page.useCanvasStore.persist.rehydrate();
+    const id = page.useCanvasStore.getState().createProject("待重试");
+    await assert.rejects(page.flushCanvasStorage(), /quota full/);
+    assert.equal(page.useCanvasStore.getState().storageError, "quota full");
+    disk = JSON.stringify({ state: { projects: [{ id: "other", title: "外部画布" }], deletedProjects: [] }, version: 0 });
+    fail = false;
+    await page.flushCanvasStorage();
+    assert.deepEqual(new Set(JSON.parse(disk).state.projects.map((project) => project.id)), new Set([id, "other"]));
+    assert.equal(page.useCanvasStore.getState().storageError, null);
+});
+
+test("旧写入失败时不重放旧快照，后续排队写入继续保存最新修改", async (t) => {
+    const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true, include: [] } });
+    const previousStorage = globalThis.localStorage;
+    globalThis.localStorage = { getItem: () => null, setItem() {} };
+    t.after(async () => { globalThis.localStorage = previousStorage; await server.close(); });
+    let disk = null, calls = 0, started, rejectWrite;
+    const firstStarted = new Promise((resolve) => { started = resolve; });
+    const { localForageStorage } = await server.ssrLoadModule("/src/lib/localforage-storage.ts");
+    localForageStorage.getItem = async () => disk;
+    localForageStorage.setItem = async (_key, value) => {
+        calls++;
+        if (calls === 1) await new Promise((_resolve, reject) => { rejectWrite = reject; started(); });
+        disk = value;
+    };
+    const page = await server.ssrLoadModule("/src/stores/canvas/use-canvas-store.ts");
+    await page.useCanvasStore.persist.rehydrate();
+    const first = page.useCanvasStore.getState().createProject("第一项");
+    const failure = assert.rejects(page.flushCanvasStorage(), /failed write/);
+    await firstStarted;
+    const second = page.useCanvasStore.getState().createProject("第二项");
+    const latest = page.flushCanvasStorage();
+    rejectWrite(new Error("failed write"));
+    await failure;
+    await latest;
+    await page.flushCanvasStorage();
+    assert.equal(calls, 2, "失败的旧快照不能排到新快照后再次保存");
+    assert.deepEqual(new Set(JSON.parse(disk).state.projects.map((project) => project.id)), new Set([first, second]));
+});
+
+test("读取失败时停止写入，不把空画布库覆盖到原数据，重读成功后恢复", async (t) => {
+    const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true, include: [] } });
+    const previousStorage = globalThis.localStorage;
+    globalThis.localStorage = { getItem: () => null, setItem() {} };
+    t.after(async () => { globalThis.localStorage = previousStorage; await server.close(); });
+    let fail = true, writes = 0;
+    let disk = JSON.stringify({ state: { projects: [{ id: "saved", title: "已保存" }], deletedProjects: [] }, version: 0 });
+    const { localForageStorage } = await server.ssrLoadModule("/src/lib/localforage-storage.ts");
+    localForageStorage.getItem = async () => { if (fail) throw new Error("read failed"); return disk; };
+    localForageStorage.setItem = async (_key, value) => { writes++; disk = value; };
+    const page = await server.ssrLoadModule("/src/stores/canvas/use-canvas-store.ts");
+    await page.useCanvasStore.persist.rehydrate();
+    assert.equal(page.useCanvasStore.getState().hydrated, false);
+    assert.equal(page.useCanvasStore.getState().storageError, "read failed");
+    page.useCanvasStore.getState().createProject("不能覆盖原数据");
+    await page.flushCanvasStorage();
+    assert.equal(writes, 0);
+    assert.equal(JSON.parse(disk).state.projects[0].title, "已保存");
+    fail = false;
+    await page.reloadCanvasStorage();
+    assert.equal(page.useCanvasStore.getState().hydrated, true);
+    page.useCanvasStore.getState().renameProject("saved", "恢复写入");
+    await page.flushCanvasStorage();
+    assert.equal(JSON.parse(disk).state.projects[0].title, "恢复写入");
+});
+
 test("重载保留未保存的新项目、编辑和删除，并取消旧副本回写", async (t) => {
-    const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] } });
+    const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true, include: [] } });
     const previousStorage = globalThis.localStorage;
     globalThis.localStorage = { getItem: () => null, setItem() {} };
     t.after(async () => { t.mock.timers.reset(); globalThis.localStorage = previousStorage; await server.close(); });
