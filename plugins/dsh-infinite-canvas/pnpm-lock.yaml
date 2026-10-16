@@ -595,7 +595,7 @@ packages:
     engines: {node: '>= 0.8'}
 
   whaledraw-canvas-agent@https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz:
-    resolution: {tarball: https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz}
+    resolution: {integrity: sha512-3AFdibOOXrEjofjgsRMkovKE7RVGuPWpZyncx3WTXBUzSpT1T1vLcDF2OJbO6+V45ak8QfQAQuNu6kBfiTWZqA==, tarball: https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz}
     version: 0.6.1
     engines: {node: '>=18'}
     hasBin: true
