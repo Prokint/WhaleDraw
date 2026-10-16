@@ -40,6 +40,14 @@ Codex app 插件会读取启动输出里的 Local URL 和 Connect token，并直
 
 Canvas Agent 默认只监听 `127.0.0.1`。网页第一次带正确 token 连接后，Canvas Agent 会记录该网页 Origin；之后其他 Origin 不能复用这个本地 Agent，除非用户清理 `~/.infinite-canvas/canvas-agent.json` 里的 `origins`。
 
+## DSH 专用画布通道（开发分支）
+
+DSH 只通过插件连接和控制画布，不在网页 Agent 面板发起 DSH 对话。插件使用原生工具注册与独立的 `/agent/dsh/connect`、`/agent/dsh/tools`、`/agent/dsh/disconnect` 通道，复用现有画布工具与 token 认证；Codex/Claude 的入口和 turn 绑定保持独立。
+
+连接绑定 DSH 会话、网页客户端和画布，并返回本次连接凭据。不同会话可并行控制不同画布；同一画布仍独占。工具请求必须匹配当前会话连接，切换、断开或过期连接拒绝执行，不回退到其他激活画布。网页执行前还会复核请求所属画布；旧连接的断开通知不能释放重连后的新绑定。
+
+测试包使用包含该通道的本地 Agent 构建。正式分发前必须先发布配套的独立 Canvas Agent 版本并更新 DSH 插件依赖及锁文件；当前 npm 的 0.6.0 不包含此实现，不能只改插件源码后继续加载旧依赖。
+
 ## 发布
 
 `canvas-agent` 使用自己的 `package.json` 版本号，不跟仓库根目录 `VERSION` 绑定。推送到 `main` 后，GitHub Actions 会检查 npm 上是否已经存在当前包版本；不存在时才发布 `@basketikun/canvas-agent`。

@@ -32,7 +32,7 @@ Move-Item -LiteralPath "dist/dsh-infinite-canvas-$version.tgz" -Destination "dis
 dsh plugin --profile desktop add "file:<安装包的绝对路径>"
 ```
 
-安装器会安装静态服务依赖 `sirv` 与 Canvas Agent 包。运行时由 DSH 的 `webServer` 提供插件自带的静态资源，无需 Vite 或额外前端端口。首次打开插件时会自动启动本地 Canvas Agent HTTP 进程；DSH 的 MCP 客户端另起一个工具进程。构建产物位于 `dist/app`，属于忽略文件；安装源码目录前必须完成构建。缺少产物时插件会明确报错。
+安装器会安装静态服务依赖 `sirv` 与 Canvas Agent 包。运行时由 DSH 的 `webServer` 提供插件自带的静态资源，无需 Vite 或额外前端端口。开发分支改为原生注册画布工具并调用 Canvas Agent 的 DSH 专用通道，不再启动独立 MCP 工具进程；工具名称保留现有前缀，调用身份由宿主管理，不混入模型参数。每个窗口复用一条宿主事件流承载前后台会话，成功连接后固定所属窗口，其他窗口保留的后台副本不会接走请求。构建产物位于 `dist/app`，属于忽略文件；安装源码目录前必须完成构建。缺少产物时插件会明确报错。此分支需要配套的新版 Agent，当前依赖版本尚待正式发布与同步，预览安装使用独立测试包。
 
 ## 使用与数据
 

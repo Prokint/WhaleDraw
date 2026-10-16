@@ -2,13 +2,26 @@ import { randomUUID } from "node:crypto";
 
 export const appPath = "/plugins/dsh-infinite-canvas/app";
 
-export function installCanvasLauncher(ctx, ensureAgent, bindings) {
+export function installCanvasLauncher(ctx, ensureAgent, bindings, definitions = []) {
     const clients = new Map();
+    const hosts = new Map();
+    const streamHosts = new WeakMap();
     const pending = new Map();
     const preparing = new Map();
     const targets = new WeakMap();
     const notices = new WeakMap();
     const defaultChanges = new WeakSet();
+    const preparedTools = new Map();
+    const connections = new Map();
+    const channelRequest = async (config, action, input, signal) => {
+        const response = await fetch(`${config.url}/agent/dsh/${action}`, {
+            method: "POST", headers: { "content-type": "application/json", "x-canvas-agent-token": config.token },
+            body: JSON.stringify(input), signal,
+        });
+        const body = await response.json();
+        if (!response.ok || !body.ok) throw Object.assign(new Error(body.error || "DSH 画布通道请求失败"), { code: body.code });
+        return body.result;
+    };
     const disconnected = (message) => ({ opened: false, connected: false, mode: "canvas", message });
     const requestPage = (sessionId, stream, signal, kind, binding) => {
         signal.throwIfAborted();
@@ -23,7 +36,7 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
             const abort = () => finish(signal.reason || new Error("画布连接已取消"));
             pending.set(requestId, { sessionId, stream, kind, binding, finish });
             signal.addEventListener("abort", abort, { once: true });
-            stream.write(`event: ${kind}\ndata: ${JSON.stringify({ requestId, ...binding })}\n\n`);
+            stream.write(`event: ${kind}\ndata: ${JSON.stringify({ requestId, sessionId, ...binding })}\n\n`);
         });
     };
     const ask = async (agent, signal, question, options) => {
@@ -36,7 +49,9 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
     const openCanvas = async (agent, signal, reselect = false, checkSidebar = false) => {
         signal.throwIfAborted();
         const sessionId = agent?.session.id;
-        const stream = [...(clients.get(sessionId) || [])].at(-1);
+        const streams = clients.get(sessionId);
+        const owner = hosts.get(connections.get(sessionId)?.hostId)?.stream;
+        const stream = streams?.has(owner) ? owner : [...(streams || [])].at(-1);
         if (!stream) return disconnected("请在 DSH 中打开当前聊天，画布将自动显示在右侧面板");
         reselect = reselect && defaultChanges.has(agent);
         const defaultBinding = bindings.get(sessionId);
@@ -69,15 +84,16 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
         if (!clients.get(sessionId)?.has(stream)) throw new Error("DSH 当前聊天界面已断开");
         const result = await requestPage(sessionId, stream, signal, "open-canvas", binding);
         signal.throwIfAborted();
-        const response = await fetch(`${url}/canvas/activate?token=${encodeURIComponent(token)}&clientId=${encodeURIComponent(result.clientId)}`, { method: "POST", signal });
-        if (!response.ok) throw new Error("画布连接已失效，请重新打开画布");
         binding = binding.mode === "workbench" ? { mode: "workbench" } : { mode: "canvas", projectId: result.projectId };
+        const { connectionId } = await channelRequest({ url, token }, "connect", { sessionId, clientId: result.clientId, ...binding }, signal);
+        const connection = { url, token, connectionId, sessionId, hostId: streamHosts.get(stream) };
+        connections.set(sessionId, connection);
         if (saveDefault) {
             await bindings.put(sessionId, binding);
             defaultChanges.delete(agent);
         }
         targets.set(agent, binding);
-        return { opened: true, connected: true, ...binding };
+        return { opened: true, connected: true, ...binding, connection };
     };
     const prepare = (agent, signal, reselect = false, checkSidebar = false) => {
         const sessionId = agent?.session.id;
@@ -112,24 +128,54 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
         }
         return true;
     };
+    const detachSession = (sessionId, stream) => {
+        const streams = clients.get(sessionId);
+        streams?.delete(stream);
+        if (!streams?.size) clients.delete(sessionId);
+        for (const request of pending.values()) {
+            if (request.stream === stream && request.sessionId === sessionId) request.finish(new Error("DSH 当前聊天界面已断开"));
+        }
+    };
+    const subscribe = (host, sessions) => {
+        for (const id of host.sessions) if (!sessions.has(id)) detachSession(id, host.stream);
+        for (const id of sessions) {
+            const streams = clients.get(id) || new Set();
+            streams.add(host.stream);
+            clients.set(id, streams);
+        }
+        host.sessions = sessions;
+    };
     ctx.effect(() => ctx.webServer.register({
         kind: "exact", path: `${appPath}/host-events`,
         handler(req, res) {
             if (!admit(req, res)) return;
-            const sessionId = new URL(req.url, "http://localhost").searchParams.get("sessionId");
-            if (!sessionId) { res.writeHead(400); res.end(); return; }
+            const params = new URL(req.url, "http://localhost").searchParams;
+            const hostId = params.get("hostId");
+            if (!hostId) { res.writeHead(400); res.end(); return; }
             res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
             res.write(": connected\n\n");
-            const streams = clients.get(sessionId) || new Set();
-            streams.add(res);
-            clients.set(sessionId, streams);
+            const previous = hosts.get(hostId);
+            const host = { stream: res, sessions: new Set() };
+            hosts.set(hostId, host);
+            streamHosts.set(res, hostId);
+            previous?.stream.end();
+            subscribe(host, new Set(params.getAll("sessionId").filter(Boolean)));
             res.on("close", () => {
-                streams.delete(res);
-                if (!streams.size) clients.delete(sessionId);
-                for (const request of pending.values()) {
-                    if (request.stream === res) request.finish(new Error("DSH 当前聊天界面已断开"));
-                }
+                if (hosts.get(hostId) === host) hosts.delete(hostId);
+                for (const id of host.sessions) detachSession(id, res);
             });
+        },
+    }));
+    ctx.effect(() => ctx.webServer.register({
+        kind: "exact", path: `${appPath}/host-sessions`,
+        handler(req, res) {
+            if (!admit(req, res)) return;
+            const params = new URL(req.url, "http://localhost").searchParams;
+            const host = hosts.get(params.get("hostId"));
+            if (!host) { res.writeHead(409); res.end(); return; }
+            subscribe(host, new Set(params.getAll("sessionId").filter(Boolean)));
+            res.writeHead(204);
+            res.end();
         },
     }));
     ctx.effect(() => ctx.webServer.register({
@@ -139,7 +185,7 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
             const params = new URL(req.url, "http://localhost").searchParams;
             const requestId = params.get("requestId");
             const request = pending.get(requestId);
-            if (!request || request.sessionId !== params.get("sessionId")) { res.writeHead(409); res.end(); return; }
+            if (!request || request.sessionId !== params.get("sessionId") || streamHosts.get(request.stream) !== params.get("hostId")) { res.writeHead(409); res.end(); return; }
             res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
             res.end(JSON.stringify({ requestId, ...request.binding }));
         },
@@ -150,7 +196,7 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
             if (!admit(req, res)) return;
             const params = new URL(req.url, "http://localhost").searchParams;
             const request = pending.get(params.get("requestId"));
-            if (!request || request.sessionId !== params.get("sessionId")) { res.writeHead(409); res.end(); return; }
+            if (!request || request.sessionId !== params.get("sessionId") || streamHosts.get(request.stream) !== params.get("hostId")) { res.writeHead(409); res.end(); return; }
             const error = params.get("error");
             if (request.kind === "inspect-canvas") {
                 const mode = params.get("mode");
@@ -177,7 +223,21 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
             schema: { type: "object", properties: { opened: { type: "boolean" }, connected: { type: "boolean" }, mode: { type: "string", enum: ["canvas", "workbench"] }, projectId: { type: "string" }, message: { type: "string" } }, required: ["opened", "connected", "mode"], additionalProperties: false },
             render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }],
         },
-        execute: (args, exec) => args.reselect !== true && notices.has(exec.agent) ? notices.get(exec.agent) : prepare(exec.agent, exec.signal, args.reselect === true, true),
+        execute: (args, exec) => args.reselect !== true && notices.has(exec.agent) ? notices.get(exec.agent) : prepare(exec.agent, exec.signal, args.reselect === true, true).then(({ connection, ...result }) => result),
+    }));
+    for (const definition of definitions) ctx.effect(() => ctx.tools.register({
+        ...definition, name: `mcp__infinite-canvas__${definition.name}`,
+        output: {
+            schema: { type: "object", properties: { result: {} }, required: ["result"], additionalProperties: false },
+            render: (_args, value) => [{ type: "text", text: JSON.stringify(value.result) }],
+        },
+        async execute(input, exec) {
+            const connection = preparedTools.get(exec.token)?.connection;
+            if (!connection) throw new Error("请先连接当前会话的画布");
+            return { result: await channelRequest(connection, "tools", {
+                sessionId: connection.sessionId, connectionId: connection.connectionId, name: definition.name, input,
+            }, exec.signal) };
+        },
     }));
     ctx.on("tools/execute", async (exec, next) => {
         if (exec.name.startsWith("mcp__infinite-canvas__")) {
@@ -187,13 +247,16 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
                 || (name === "canvas_apply_ops" && input.ops?.some((op) => op.type === "run_generation"))
                 || (input.autoRun === true && ["canvas_create_config_node", "canvas_create_image_prompt_flow", "canvas_create_generation_flow"].includes(name));
             const binding = notices.get(exec.agent) || await prepare(exec.agent, exec.signal, false, generates || (name.startsWith("canvas_") && name !== "canvas_list_projects") || name === "workbench_image_get_config");
-            if (binding.opened === false) return { isError: false, value: binding, content: [{ type: "text", text: `${binding.message} 本次未读取或修改画布，请向用户说明原因和可行的下一步。` }] };
+            if (binding.opened === false) return { isError: false, value: { result: binding }, content: [{ type: "text", text: `${binding.message} 本次未读取或修改画布，请向用户说明原因和可行的下一步。` }] };
             if (binding.mode === "workbench" && exec.name.includes("__canvas_") && !exec.name.endsWith("__canvas_list_projects")) {
                 throw new Error("本次操作位置是生图工作台，请使用 workbench_image_get_config / workbench_image_generate；可调用 infinite_canvas_open 重新确认位置");
             }
             if (binding.mode === "canvas" && exec.name.endsWith("__workbench_image_generate")) {
                 throw new Error("本次操作位置是画布，请使用 canvas_generate_image 将图片生成到所选画布");
             }
+            preparedTools.set(exec.token, binding);
+            try { return await next(); }
+            finally { preparedTools.delete(exec.token); }
         }
         return next();
     });
@@ -225,9 +288,12 @@ export function installCanvasLauncher(ctx, ensureAgent, bindings) {
             return `用户提到 WhaleDraw、画布或需要生成、编辑图片时，先调用 infinite_canvas_open 等待选择与连接完成。插件每次生图前检查侧边栏，位置不同时询问当前侧边栏、默认绑定或其他画布，不得代替用户选择。${current} 这是本次请求的操作位置，临时选择不修改默认绑定；仅当用户明确要求更改连接或默认画布时调用 infinite_canvas_open({reselect:true})。使用 mcp__infinite-canvas__ 前缀的工具和插件自己的模型配置。打开、选择或连接失败时说明原因，不声称已生成或已修改。`;
         },
     }));
-    ctx.effect(() => () => {
+    ctx.effect(() => async () => {
         for (const request of pending.values()) request.finish(new Error("WhaleDraw 插件已停用"));
-        for (const streams of clients.values()) for (const stream of streams) stream.end();
+        for (const host of hosts.values()) host.stream.end();
+        hosts.clear();
         clients.clear();
+        await Promise.allSettled([...connections.values()].map((connection) => channelRequest(connection, "disconnect", { sessionId: connection.sessionId, connectionId: connection.connectionId })));
+        connections.clear();
     });
 }

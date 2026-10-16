@@ -28,6 +28,7 @@ export type CanvasDeletedProject = {
 
 type CanvasStore = {
     hydrated: boolean;
+    storageError: string | null;
     projects: CanvasProject[];
     deletedProjects: CanvasDeletedProject[];
     createProject: (title?: string) => string;
@@ -46,8 +47,12 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
 let pendingPersistValue: StorageValue<CanvasStore> | null = null;
 let persistWrite = Promise.resolve();
+let lastWrite = persistWrite;
+let saveSequence = 0;
+let storageReady = false;
 /** 本页面最后一次读写的画布库原文，用来判断其他页面是否改过磁盘上的内容。 */
 let knownRaw: string | null = null;
+let savedLocalState: PersistedCanvasState = { projects: [], deletedProjects: [] };
 
 export function flushCanvasStorage() {
     if (saveTimer) clearTimeout(saveTimer);
@@ -55,10 +60,30 @@ export function flushCanvasStorage() {
     const value = pendingPersistValue;
     pendingPersistValue = null;
     if (value) {
-        const raw = JSON.stringify(value);
-        persistWrite = persistWrite.then(() => localForageStorage.setItem(CANVAS_STORE_KEY, raw)).then(() => { knownRaw = raw; });
+        const sequence = ++saveSequence;
+        const save = async () => {
+            if (!storageReady) throw new Error("画布库尚未成功读取，已停止写入以保护原数据");
+            const current = await localForageStorage.getItem(CANVAS_STORE_KEY);
+            const disk = current ? (JSON.parse(current) as StorageValue<CanvasStore>).state : { projects: [], deletedProjects: [] };
+            const raw = JSON.stringify({ ...value, state: {
+                projects: mergePendingChanges(savedLocalState.projects, value.state.projects, disk.projects),
+                deletedProjects: mergePendingChanges(savedLocalState.deletedProjects, value.state.deletedProjects, disk.deletedProjects),
+            } });
+            await localForageStorage.setItem(CANVAS_STORE_KEY, raw);
+            savedLocalState = value.state;
+            knownRaw = raw;
+            useCanvasStore.setState({ storageError: null });
+        };
+        // 只将磁盘读改写放进跨窗口锁，画布操作仍可并行执行。
+        lastWrite = persistWrite.then(() => globalThis.navigator?.locks ? navigator.locks.request(CANVAS_STORE_KEY, save) : save()).catch((error: unknown) => {
+            // 后续已排队的新快照包含本次改动，不能再把失败的旧快照放回去覆盖它。
+            if (sequence === saveSequence && !pendingPersistValue) pendingPersistValue = value;
+            useCanvasStore.setState({ storageError: error instanceof Error ? error.message : String(error) });
+            throw error;
+        });
+        persistWrite = lastWrite.catch(() => {});
     }
-    return persistWrite;
+    return lastWrite;
 }
 
 /** 磁盘上的画布库是否已被其他页面改写。 */
@@ -78,7 +103,7 @@ function mergePendingChanges<T extends { id: string }>(previous: T[], pending: T
 export async function reloadCanvasStorage() {
     await persistWrite;
     const pending = pendingPersistValue;
-    const previous = knownRaw ? (JSON.parse(knownRaw) as StorageValue<CanvasStore>).state : { projects: [], deletedProjects: [] };
+    const previous = savedLocalState;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
     pendingPersistValue = null;
@@ -97,27 +122,30 @@ export async function reloadCanvasStorage() {
         pendingPersistValue = pending;
         throw error;
     } finally {
-        useCanvasStore.setState({ hydrated: true });
+        useCanvasStore.setState({ hydrated: storageReady });
     }
     await flushCanvasStorage();
 }
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
+        storageReady = false;
         const value = await localForageStorage.getItem(name);
-        if (!value) return null;
-        const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
+        const parsed = value ? JSON.parse(value) as StorageValue<CanvasStore> : null;
         knownRaw = value;
-        queuedPersistState = parsed.state as PersistedCanvasState;
+        savedLocalState = parsed?.state ?? { projects: [], deletedProjects: [] };
+        queuedPersistState = savedLocalState;
+        storageReady = true;
         return parsed;
     },
     setItem: (_name, value) => {
+        if (!storageReady) return;
         const nextState = value.state as PersistedCanvasState;
         if (queuedPersistState && queuedPersistState.projects === nextState.projects && queuedPersistState.deletedProjects === nextState.deletedProjects) return;
         queuedPersistState = nextState;
         pendingPersistValue = value;
         if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => void flushCanvasStorage(), 400);
+        saveTimer = setTimeout(() => void flushCanvasStorage().catch(() => {}), 400);
     },
     removeItem: (name) => localForageStorage.removeItem(name),
 };
@@ -126,6 +154,7 @@ export const useCanvasStore = create<CanvasStore>()(
     persist(
         (set, get) => ({
             hydrated: false,
+            storageError: null,
             projects: [],
             deletedProjects: [],
             createProject: (title = i18n.t("canvas.project.untitled")) => {
@@ -194,8 +223,13 @@ export const useCanvasStore = create<CanvasStore>()(
                     projects: state.projects,
                     deletedProjects: state.deletedProjects,
                 }) as StorageValue<CanvasStore>["state"],
-            onRehydrateStorage: () => () => {
-                useCanvasStore.setState({ hydrated: true });
+            onRehydrateStorage: () => (_state, error) => {
+                if (error) {
+                    storageReady = false;
+                    useCanvasStore.setState({ hydrated: false, storageError: error instanceof Error ? error.message : String(error) });
+                    return;
+                }
+                useCanvasStore.setState({ hydrated: true, storageError: null });
             },
         },
     ),

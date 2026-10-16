@@ -10,10 +10,12 @@ import { setImageBlob } from "@/services/image-storage";
 import { CanvasDeleteProjectsDialog } from "@/components/canvas/canvas-delete-projects-dialog";
 import { CanvasProjectCard } from "@/components/canvas/canvas-project-card";
 import type { CanvasExportFile } from "@/types/canvas-export";
-import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { reloadCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
+import { useCanvasObserverStore } from "@/stores/canvas/use-canvas-observer-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
+import { IS_DSH_PLUGIN } from "@/constant/env";
 
 export default function CanvasPage() {
     const { message } = App.useApp();
@@ -23,11 +25,16 @@ export default function CanvasPage() {
     const inputRef = useRef<HTMLInputElement>(null);
     const autoOpenRef = useRef(false);
     const hydrated = useCanvasStore((state) => state.hydrated);
+    const storageError = useCanvasStore((state) => state.storageError);
     const projects = useCanvasStore((state) => state.projects);
     const createProject = useCanvasStore((state) => state.createProject);
     const importProject = useCanvasStore((state) => state.importProject);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
+    const controlKey = useCanvasObserverStore((state) => state.controls.map((control) => control.projectId).sort().join("\0"));
+    const controlledIds = new Set(controlKey ? controlKey.split("\0") : []);
+    const deletableIds = projects.filter((project) => !controlledIds.has(project.id)).map((project) => project.id);
+    const selectedDeletableIds = selectedIds.filter((id) => !controlledIds.has(id));
 
     const mode = searchParams.get("mode");
     const agentMode = mode === "new" || mode === "recent" || mode === "choose";
@@ -64,6 +71,15 @@ export default function CanvasPage() {
     };
 
     useEffect(() => {
+        if (!IS_DSH_PLUGIN) return;
+        const controls = useCanvasObserverStore.getState().controls;
+        const ui = useCanvasUiStore.getState();
+        ui.removeSelectedProjectIds(controls.map((control) => control.projectId));
+        if (controls.some((control) => control.projectId === ui.editingProjectId)) ui.stopEditingProject();
+        void reloadCanvasStorage().catch(() => message.warning("无法刷新画布列表，请稍后重试"));
+    }, [controlKey, message]);
+
+    useEffect(() => {
         if (!hydrated || autoOpenRef.current || (mode !== "new" && mode !== "recent")) return;
         autoOpenRef.current = true;
         enterProject(mode === "new" ? createProject(t("canvas.defaultTitle", { count: projects.length + 1 })) : projects[0]?.id || createProject(t("canvas.defaultTitle", { count: projects.length + 1 })));
@@ -85,13 +101,13 @@ export default function CanvasPage() {
                                 <Button disabled={!hydrated} icon={<Download className="size-4" />} onClick={() => void exportCanvasProjects(projects.filter((project) => selectedIds.includes(project.id)), `${t("canvas.title")}-${selectedIds.length}`)}>
                                     {t("canvas.exportSelected")}
                                 </Button>
-                                <Button disabled={!hydrated} onClick={() => setDeleteIds(selectedIds)}>
+                                <Button disabled={!hydrated || !selectedDeletableIds.length} onClick={() => setDeleteIds(selectedDeletableIds)}>
                                     {t("canvas.deleteSelected")}
                                 </Button>
                             </>
                         ) : null}
                         {projects.length ? (
-                            <Button disabled={!hydrated} onClick={() => setDeleteIds(projects.map((project) => project.id))}>
+                            <Button disabled={!hydrated || !deletableIds.length} onClick={() => setDeleteIds(deletableIds)}>
                                 {t("canvas.deleteAll")}
                             </Button>
                         ) : null}
@@ -105,7 +121,7 @@ export default function CanvasPage() {
                 </header>
 
                 {!hydrated ? (
-                    <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">{t("canvas.loading")}</section>
+                    <section role={storageError ? "alert" : "status"} className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">{storageError ? t("canvas.projectPage.storageError") : t("canvas.loading")}</section>
                 ) : projects.length ? (
                     <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
                         {projects.map((project) => (
