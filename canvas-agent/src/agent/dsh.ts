@@ -120,7 +120,7 @@ export class DshChannel {
     private canvases(): CanvasStatus[] {
         return [...this.sessions.values()].flatMap((binding) => {
             const snapshot = this.canvas.canvasStateForClient(binding.clientId);
-            return binding.mode === "canvas" && snapshot?.projectId === binding.projectId
+            return binding.mode === "canvas" && snapshot && snapshot.projectId === binding.projectId
                 ? [{ projectId: binding.projectId!, title: snapshot.title || "", clientId: binding.clientId }] : [];
         });
     }
