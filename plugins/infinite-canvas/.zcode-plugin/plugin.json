@@ -14,7 +14,7 @@
   "mcpServers": {
     "infinite-canvas": {
       "command": "npx",
-      "args": ["-y", "@basketikun/canvas-agent@latest", "mcp"]
+      "args": ["-y", "https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz", "mcp"]
     }
   }
 }

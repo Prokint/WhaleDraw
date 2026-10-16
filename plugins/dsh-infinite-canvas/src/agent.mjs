@@ -1,1 +1,1 @@
-import "@basketikun/canvas-agent";
+import "whaledraw-canvas-agent";

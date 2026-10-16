@@ -1,4 +1,5 @@
 export const APP_VERSION = __APP_VERSION__ || "dev";
+export const CANVAS_AGENT_COMMAND = `npx -y https://github.com/Prokint/WhaleDraw/releases/download/${APP_VERSION}/whaledraw-canvas-agent.tgz`;
 
 export const IS_DSH_PLUGIN = import.meta.env.BASE_URL.startsWith("/plugins/dsh-infinite-canvas/app/");
 
