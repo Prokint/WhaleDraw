@@ -46,13 +46,13 @@ DSH 只通过插件连接和控制画布，不在网页 Agent 面板发起 DSH �
 
 连接绑定 DSH 会话、网页客户端和画布，并返回本次连接凭据。不同会话可并行控制不同画布；同一画布仍独占。工具请求必须匹配当前会话连接，切换、断开或过期连接拒绝执行，不回退到其他激活画布。网页执行前还会复核请求所属画布；旧连接的断开通知不能释放重连后的新绑定。
 
-DSH 插件固定依赖同一 WhaleDraw Release 的配套 Agent 安装包，包含专用通道实现；不再安装上游 npm 的旧版 Agent。
+DSH 插件安装包内置本仓库构建的配套 Agent，包含专用通道实现；安装时不再单独下载 GitHub 的 Agent 附件。独立命令行 Agent 仍从本仓库 Release 安装。
 
 ## 发布
 
 `whaledraw-canvas-agent` 使用自己的 `package.json` 版本号，不跟仓库根目录 `VERSION` 绑定。应用与 DSH 插件发布 Release 时，GitHub Actions 先构建 Agent，再上传 `whaledraw-canvas-agent-<Agent 版本>.tgz` 和同内容的 `whaledraw-canvas-agent.tgz`，随后打包并上传 DSH 插件。
 
-DSH 插件依赖固定到该 Release 的版本化下载地址；独立 Agent 的更新检查读取 `Prokint/WhaleDraw` Release。此流程由本仓库管理，无需上游 npm 发布权限或 `NPM_TOKEN`。后续新增版本时同步更新插件依赖和锁文件中的 Release 标签。
+DSH 插件内置同源构建的 Agent，常规运行依赖由插件声明；独立 Agent 的更新检查读取 `Prokint/WhaleDraw` Release。此流程由本仓库管理，无需上游 npm 发布权限或 `NPM_TOKEN`。后续调整 Agent 运行依赖时，同步更新 DSH 插件的依赖声明与锁文件；构建会检查是否遗漏依赖。
 
 ## Codex MCP
 

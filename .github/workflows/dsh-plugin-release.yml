@@ -47,22 +47,6 @@ jobs:
           package="$RUNNER_TEMP/canvas-agent/whaledraw-canvas-agent-$version.tgz"
           cp "$package" "$RUNNER_TEMP/canvas-agent/whaledraw-canvas-agent.tgz"
           gh release upload "$RELEASE_TAG" "$package" "$RUNNER_TEMP/canvas-agent/whaledraw-canvas-agent.tgz" --clobber
-      - name: Record packaged Agent integrity
-        run: |
-          node --input-type=module <<'NODE'
-          import { createHash } from "node:crypto";
-          import { readFileSync, writeFileSync } from "node:fs";
-          import YAML from "./canvas-agent/node_modules/yaml/dist/index.js";
-          const agent = JSON.parse(readFileSync("canvas-agent/package.json", "utf8"));
-          const plugin = JSON.parse(readFileSync("plugins/dsh-infinite-canvas/package.json", "utf8"));
-          const file = "plugins/dsh-infinite-canvas/pnpm-lock.yaml";
-          const lock = YAML.parseDocument(readFileSync(file, "utf8"));
-          const resolution = lock.getIn(["packages", `${agent.name}@${plugin.dependencies[agent.name]}`, "resolution"]);
-          if (!resolution) throw new Error("配套 Agent 缺少锁文件条目");
-          const archive = readFileSync(`${process.env.RUNNER_TEMP}/canvas-agent/${agent.name}-${agent.version}.tgz`);
-          resolution.set("integrity", `sha512-${createHash("sha512").update(archive).digest("base64")}`);
-          writeFileSync(file, lock.toString());
-          NODE
       - name: Install web dependencies
         working-directory: web
         run: |
