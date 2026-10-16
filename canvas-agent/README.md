@@ -5,15 +5,15 @@
 ## 启动
 
 ```bash
-npx -y @basketikun/canvas-agent@latest
+npx -y https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz
 ```
 
-带上 `@latest` 是因为 npx 会缓存已下载的版本，不加就可能一直运行旧版本。
+命令固定安装本仓库 v0.2.4 Release 的配套 Agent，包名为 `whaledraw-canvas-agent`，独立版本号为 0.6.1。
 
 需要排查连接、线程、Codex app-server 或工具调用问题时，可开启 Debug 模式：
 
 ```bash
-npx -y @basketikun/canvas-agent@latest --debug
+npx -y https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz --debug
 ```
 
 Debug 日志会以 `[DEBUG][HH:mm:ss]` 等传统格式输出到终端，并按启动日期保存到 `~/.infinite-canvas/logs/canvas-agent-YYYY-MM-DD.log`。终端日志带级别颜色，文件日志为纯文本；日志包含 HTTP、SSE、线程、turn、Codex app-server 和工具调用事件，token 与图片 Data URL 会自动隐藏。
@@ -40,25 +40,25 @@ Codex app 插件会读取启动输出里的 Local URL 和 Connect token，并直
 
 Canvas Agent 默认只监听 `127.0.0.1`。网页第一次带正确 token 连接后，Canvas Agent 会记录该网页 Origin；之后其他 Origin 不能复用这个本地 Agent，除非用户清理 `~/.infinite-canvas/canvas-agent.json` 里的 `origins`。
 
-## DSH 专用画布通道（开发分支）
+## DSH 专用画布通道
 
 DSH 只通过插件连接和控制画布，不在网页 Agent 面板发起 DSH 对话。插件使用原生工具注册与独立的 `/agent/dsh/connect`、`/agent/dsh/tools`、`/agent/dsh/disconnect` 通道，复用现有画布工具与 token 认证；Codex/Claude 的入口和 turn 绑定保持独立。
 
 连接绑定 DSH 会话、网页客户端和画布，并返回本次连接凭据。不同会话可并行控制不同画布；同一画布仍独占。工具请求必须匹配当前会话连接，切换、断开或过期连接拒绝执行，不回退到其他激活画布。网页执行前还会复核请求所属画布；旧连接的断开通知不能释放重连后的新绑定。
 
-测试包使用包含该通道的本地 Agent 构建。正式分发前必须先发布配套的独立 Canvas Agent 版本并更新 DSH 插件依赖及锁文件；当前 npm 的 0.6.0 不包含此实现，不能只改插件源码后继续加载旧依赖。
+DSH 插件固定依赖同一 WhaleDraw Release 的配套 Agent 安装包，包含专用通道实现；不再安装上游 npm 的旧版 Agent。
 
 ## 发布
 
-`canvas-agent` 使用自己的 `package.json` 版本号，不跟仓库根目录 `VERSION` 绑定。推送到 `main` 后，GitHub Actions 会检查 npm 上是否已经存在当前包版本；不存在时才发布 `@basketikun/canvas-agent`。
+`whaledraw-canvas-agent` 使用自己的 `package.json` 版本号，不跟仓库根目录 `VERSION` 绑定。应用与 DSH 插件发布 Release 时，GitHub Actions 先构建 Agent，再上传 `whaledraw-canvas-agent-<Agent 版本>.tgz` 和同内容的 `whaledraw-canvas-agent.tgz`，随后打包并上传 DSH 插件。
 
-发布前需要在 GitHub 仓库 Secrets 中配置 `NPM_TOKEN`。
+DSH 插件依赖固定到该 Release 的版本化下载地址；独立 Agent 的更新检查读取 `Prokint/WhaleDraw` Release。此流程由本仓库管理，无需上游 npm 发布权限或 `NPM_TOKEN`。后续新增版本时同步更新插件依赖和锁文件中的 Release 标签。
 
 ## Codex MCP
 
 如果希望 Codex 终端能直接操作画布，需要先把 Canvas Agent 注册成 Codex MCP。
 
-直接运行 `npx -y @basketikun/canvas-agent@latest` 只启动本地 Agent 服务，不会安装 MCP，也不会增加 Codex 工具上下文。只有安装 Codex app 插件，或手动执行 `codex mcp add` 后，`infinite-canvas` 工具才会进入 Codex 上下文；由于工具较多，不使用时建议移除。
+直接运行 `npx -y https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz` 只启动本地 Agent 服务，不会安装 MCP，也不会增加 Codex 工具上下文。只有安装 Codex app 插件，或手动执行 `codex mcp add` 后，`infinite-canvas` 工具才会进入 Codex 上下文；由于工具较多，不使用时建议移除。
 
 通过插件安装时移除插件：
 
@@ -87,7 +87,7 @@ codex plugin add infinite-canvas@infinite-canvas-local
 插件默认通过 npm 启动 MCP；这个命令只提供 MCP 工具，不会把 MCP 写入全局配置，也不会在退出时自动卸载：
 
 ```bash
-npx -y @basketikun/canvas-agent@latest mcp
+npx -y https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz mcp
 ```
 
 使用时可以直接在 Codex 里说“打开 Infinite Canvas”，插件会启动本地 Agent，读取 Local URL 和 Connect token，然后在右侧打开 `https://canvas.best/` 并自动新建、连接画布；只有明确要求使用本地项目时才会启动本地前端。
@@ -95,7 +95,7 @@ npx -y @basketikun/canvas-agent@latest mcp
 Canvas Agent 启动后，给 Codex 添加 MCP：
 
 ```bash
-codex mcp add infinite-canvas -- npx -y @basketikun/canvas-agent@latest mcp
+codex mcp add infinite-canvas -- npx -y https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz mcp
 ```
 
 本仓库开发时可以改成，实际使用建议替换为本机绝对路径：
@@ -111,7 +111,7 @@ Canvas Agent 源码使用 TypeScript 编写，MCP 协议层使用官方 `@modelc
 ```toml
 [mcp_servers.infinite-canvas]
 command = "npx"
-args = ["-y", "@basketikun/canvas-agent@latest", "mcp"]
+args = ["-y", "https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz", "mcp"]
 default_tools_approval_mode = "approve"
 ```
 
@@ -155,7 +155,7 @@ Claude Code Adapter 代码暂时保留，但当前网页侧边栏只开放 Codex
 如果希望 Claude Code 也能操作画布，需要给 Claude Code 添加同一个 MCP。建议用 user scope，避免 Canvas Agent 从不同目录启动时找不到配置：
 
 ```bash
-claude mcp add --scope user --transport stdio infinite-canvas -- npx -y @basketikun/canvas-agent@latest mcp
+claude mcp add --scope user --transport stdio infinite-canvas -- npx -y https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz mcp
 ```
 
 本仓库开发时可以改成：

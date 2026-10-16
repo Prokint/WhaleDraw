@@ -1,6 +1,6 @@
 {
   "name": "dsh-infinite-canvas",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "在 DeepSeek Harness 中使用 WhaleDraw 无限画布创作工作台",
   "type": "module",
   "license": "MIT",
@@ -23,7 +23,7 @@
     "prepack": "node scripts/build.mjs"
   },
   "dependencies": {
-    "@basketikun/canvas-agent": "0.6.0",
+    "whaledraw-canvas-agent": "https://github.com/Prokint/WhaleDraw/releases/download/v0.2.4/whaledraw-canvas-agent.tgz",
     "semver": "^7.8.5",
     "sirv": "^3.0.2",
     "tar": "7.5.22",

@@ -31,6 +31,22 @@ jobs:
       - name: Check release version
         run: |
           node --input-type=module -e 'import {readFileSync} from "node:fs"; if (readFileSync("VERSION", "utf8").trim() !== process.env.RELEASE_TAG) throw new Error("VERSION 与发布标签不一致");'
+      - name: Build and pack Canvas Agent
+        working-directory: canvas-agent
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+          test -f dist/agent/dsh.js
+          mkdir -p "$RUNNER_TEMP/canvas-agent"
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/canvas-agent"
+      - name: Upload Canvas Agent packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p 'require("./canvas-agent/package.json").version')
+          package="$RUNNER_TEMP/canvas-agent/whaledraw-canvas-agent-$version.tgz"
+          cp "$package" "$RUNNER_TEMP/canvas-agent/whaledraw-canvas-agent.tgz"
+          gh release upload "$RELEASE_TAG" "$package" "$RUNNER_TEMP/canvas-agent/whaledraw-canvas-agent.tgz" --clobber
       - name: Install web dependencies
         working-directory: web
         run: |
@@ -51,4 +67,4 @@ jobs:
         run: |
           version="${RELEASE_TAG#v}"
           mv "plugins/dsh-infinite-canvas/dist/dsh-infinite-canvas-$version.tgz" "plugins/dsh-infinite-canvas/dist/whaledraw-$version.tgz"
-          gh release upload "$RELEASE_TAG" "plugins/dsh-infinite-canvas/dist/whaledraw-$version.tgz"
+          gh release upload "$RELEASE_TAG" "plugins/dsh-infinite-canvas/dist/whaledraw-$version.tgz" --clobber
