@@ -4,6 +4,7 @@ import path from "node:path";
 import express, { type NextFunction, type Request, type Response } from "express";
 
 import { runClaudeTurn } from "../agent/claude.js";
+import { installDshChannel } from "../agent/dsh.js";
 import { archiveCodexThread, CodexSkillLookupError, configureCodexSkill, generateCodexSkillDraft, interruptCodexTurn, isRecoverableThreadError, listCodexModels, listCodexSkills, listCodexThreads, readCodexThread, resolveCodexApproval, resolveCodexSkill, resumeCodexThread, runCodexTurn, startCodexThread, summarizeCodexThread } from "../agent/codex.js";
 import type { CodexReasoningEffort, CodexSkillSelector } from "../agent/codex-protocol.js";
 import { messageMetadataStore } from "../agent/message-metadata.js";
@@ -126,11 +127,15 @@ export function startHttpServer() {
         if (validToken(req, requestUrl(req, config), config.token)) return next();
         res.status(401).json({ ok: false, error: "invalid token" });
     });
+    const dsh = installDshChannel(app, session);
     app.get("/events", (req, res) => {
         session.openEvents(requestUrl(req, config), res, ensureSiteWorkspace(config).activeThreadId || "");
+        dsh.clientConnected(String(req.query.clientId || ""));
+        res.on("close", () => dsh.clientDisconnected(String(req.query.clientId || "")));
     });
     app.post("/canvas/state", (req, res) => {
         session.updateState(req.body, String(req.query.clientId || "") || undefined);
+        dsh.stateChanged(String(req.query.clientId || ""));
         res.json({ ok: true });
     });
     app.post("/canvas/activate", (req, res) => {

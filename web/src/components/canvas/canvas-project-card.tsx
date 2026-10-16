@@ -1,10 +1,13 @@
-import { Check, Download, Pencil, Trash2, X } from "lucide-react";
+import { Check, Download, Eye, Pencil, Trash2, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button, Input } from "antd";
 import { useTranslation } from "react-i18next";
 
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
+import { useCanvasObserverStore } from "@/stores/canvas/use-canvas-observer-store";
+import { useThemeStore } from "@/stores/use-theme-store";
+import { canvasThemes } from "@/lib/canvas-theme";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 
@@ -21,14 +24,17 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
     const stopEditing = useCanvasUiStore((state) => state.stopEditingProject);
     const toggleSelected = useCanvasUiStore((state) => state.toggleSelectedProjectId);
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
-    const editing = editingId === project.id;
-    const selected = selectedIds.includes(project.id);
+    const controlled = useCanvasObserverStore((state) => state.controls.some((control) => control.projectId === project.id));
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const editing = !controlled && editingId === project.id;
+    const selected = !controlled && selectedIds.includes(project.id);
+    const isControlled = () => useCanvasObserverStore.getState().controls.some((control) => control.projectId === project.id);
     const open = () => {
         const agentHash = hasAgentUrlBootstrap(window.location.hash) ? window.location.hash : "";
         navigate(`/canvas/${project.id}${searchParams.toString() ? `?${searchParams.toString()}` : ""}${agentHash}`, { replace: Boolean(agentHash) });
     };
     const saveTitle = () => {
-        renameProject(project.id, editingTitle);
+        if (!isControlled()) renameProject(project.id, editingTitle);
         stopEditing();
     };
 
@@ -38,8 +44,9 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                 <input
                     type="checkbox"
                     checked={selected}
+                    disabled={controlled}
                     onClick={(event) => event.stopPropagation()}
-                    onChange={(event) => toggleSelected(project.id, event.target.checked)}
+                    onChange={(event) => !isControlled() && toggleSelected(project.id, event.target.checked)}
                     className="mt-1 size-4 accent-stone-950 dark:accent-stone-100"
                     aria-label={t("canvas.project.select", { name: project.title })}
                 />
@@ -58,6 +65,7 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                         <p className="mt-3 text-sm leading-6 text-stone-600 dark:text-stone-400">
                             {t("canvas.project.stats", { nodes: project.nodes.length, connections: project.connections.length })}
                         </p>
+                        {controlled ? <p className="mt-2 flex items-center gap-1.5 text-xs" style={{ color: theme.node.label }}><Eye className="size-3.5" />正在被 Agent 调用</p> : null}
                     </button>
                 )}
             </div>
@@ -72,8 +80,8 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                     ) : (
                         <>
                             <Button type="text" size="small" shape="circle" icon={<Download className="size-4" />} onClick={() => void exportCanvasProjects([project], project.title || t("canvas.title"))} aria-label={t("canvas.project.export")} />
-                            <Button type="text" size="small" shape="circle" icon={<Pencil className="size-4" />} onClick={() => startEditing(project.id, project.title)} aria-label={t("canvas.project.rename")} />
-                            <Button type="text" size="small" shape="circle" icon={<Trash2 className="size-4" />} onClick={() => setDeleteIds([project.id])} aria-label={t("canvas.project.delete")} />
+                            <Button type="text" size="small" shape="circle" disabled={controlled} icon={<Pencil className="size-4" />} onClick={() => !isControlled() && startEditing(project.id, project.title)} aria-label={t("canvas.project.rename")} />
+                            <Button type="text" size="small" shape="circle" disabled={controlled} icon={<Trash2 className="size-4" />} onClick={() => !isControlled() && setDeleteIds([project.id])} aria-label={t("canvas.project.delete")} />
                         </>
                     )}
                 </div>

@@ -3,6 +3,44 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 
+test("两个窗口交错保存各自画布时保留另一窗口的新建、编辑和删除", async (t) => {
+    const servers = await Promise.all([0, 1].map(() => createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] } })));
+    const previousStorage = globalThis.localStorage;
+    globalThis.localStorage = { getItem: () => null, setItem() {} };
+    t.after(async () => { t.mock.timers.reset(); globalThis.localStorage = previousStorage; await Promise.all(servers.map((server) => server.close())); });
+    let disk = null;
+    const pages = await Promise.all(servers.map(async (server) => {
+        const { localForageStorage } = await server.ssrLoadModule("/src/lib/localforage-storage.ts");
+        localForageStorage.getItem = async () => disk;
+        localForageStorage.setItem = async (_key, value) => { disk = value; };
+        const page = await server.ssrLoadModule("/src/stores/canvas/use-canvas-store.ts");
+        await page.useCanvasStore.persist.rehydrate();
+        return page;
+    }));
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const [a, b] = pages;
+    const idA = a.useCanvasStore.getState().createProject("窗口 A");
+    const idB = b.useCanvasStore.getState().createProject("窗口 B");
+    await Promise.all(pages.map((page) => page.flushCanvasStorage()));
+    assert.equal(JSON.parse(disk).state.projects.length, 2);
+
+    for (let x = 1; x <= 2; x++) {
+        a.useCanvasStore.getState().updateProject(idA, { viewport: { x, y: 0, k: 1 } });
+        b.useCanvasStore.getState().updateProject(idB, { viewport: { x: -x, y: 0, k: 1 } });
+        await Promise.all(pages.map((page) => page.flushCanvasStorage()));
+        assert.equal(JSON.parse(disk).state.projects.find((project) => project.id === idA).viewport.x, x);
+        assert.equal(JSON.parse(disk).state.projects.find((project) => project.id === idB).viewport.x, -x);
+    }
+    a.useCanvasStore.getState().deleteProjects([idA]);
+    b.useCanvasStore.getState().renameProject(idB, "窗口 B 保留");
+    await Promise.all(pages.map((page) => page.flushCanvasStorage()));
+    assert.deepEqual(JSON.parse(disk).state.projects.map(({ id }) => id), [idB]);
+    assert.equal(JSON.parse(disk).state.deletedProjects[0].id, idA);
+    await b.reloadCanvasStorage();
+    assert.equal(b.useCanvasStore.getState().openProject(idB).title, "窗口 B 保留");
+    assert.equal(b.useCanvasStore.getState().openProject(idA), null);
+});
+
 test("重载保留未保存的新项目、编辑和删除，并取消旧副本回写", async (t) => {
     const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] } });
     const previousStorage = globalThis.localStorage;

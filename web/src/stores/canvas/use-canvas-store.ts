@@ -48,6 +48,7 @@ let pendingPersistValue: StorageValue<CanvasStore> | null = null;
 let persistWrite = Promise.resolve();
 /** 本页面最后一次读写的画布库原文，用来判断其他页面是否改过磁盘上的内容。 */
 let knownRaw: string | null = null;
+let savedLocalState: PersistedCanvasState = { projects: [], deletedProjects: [] };
 
 export function flushCanvasStorage() {
     if (saveTimer) clearTimeout(saveTimer);
@@ -55,8 +56,19 @@ export function flushCanvasStorage() {
     const value = pendingPersistValue;
     pendingPersistValue = null;
     if (value) {
-        const raw = JSON.stringify(value);
-        persistWrite = persistWrite.then(() => localForageStorage.setItem(CANVAS_STORE_KEY, raw)).then(() => { knownRaw = raw; });
+        const save = async () => {
+            const current = await localForageStorage.getItem(CANVAS_STORE_KEY);
+            const disk = current ? (JSON.parse(current) as StorageValue<CanvasStore>).state : { projects: [], deletedProjects: [] };
+            const raw = JSON.stringify({ ...value, state: {
+                projects: mergePendingChanges(savedLocalState.projects, value.state.projects, disk.projects),
+                deletedProjects: mergePendingChanges(savedLocalState.deletedProjects, value.state.deletedProjects, disk.deletedProjects),
+            } });
+            await localForageStorage.setItem(CANVAS_STORE_KEY, raw);
+            savedLocalState = value.state;
+            knownRaw = raw;
+        };
+        // 只将磁盘读改写放进跨窗口锁，画布操作仍可并行执行。
+        persistWrite = persistWrite.then(() => globalThis.navigator?.locks ? navigator.locks.request(CANVAS_STORE_KEY, save) : save());
     }
     return persistWrite;
 }
@@ -78,7 +90,7 @@ function mergePendingChanges<T extends { id: string }>(previous: T[], pending: T
 export async function reloadCanvasStorage() {
     await persistWrite;
     const pending = pendingPersistValue;
-    const previous = knownRaw ? (JSON.parse(knownRaw) as StorageValue<CanvasStore>).state : { projects: [], deletedProjects: [] };
+    const previous = savedLocalState;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
     pendingPersistValue = null;
@@ -105,10 +117,10 @@ export async function reloadCanvasStorage() {
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
         const value = await localForageStorage.getItem(name);
-        if (!value) return null;
-        const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
+        const parsed = value ? JSON.parse(value) as StorageValue<CanvasStore> : null;
         knownRaw = value;
-        queuedPersistState = parsed.state as PersistedCanvasState;
+        savedLocalState = parsed?.state ?? { projects: [], deletedProjects: [] };
+        queuedPersistState = savedLocalState;
         return parsed;
     },
     setItem: (_name, value) => {

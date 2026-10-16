@@ -46,6 +46,8 @@ import { useAgentStore } from "@/stores/use-agent-store";
 import { canvasStorageChanged, flushCanvasStorage, reloadCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { IS_DSH_PLUGIN, openDshChat } from "@/constant/env";
 import { acquireCanvasAccess } from "@/lib/canvas/canvas-exclusive-access";
+import { useCanvasObserverStore } from "@/stores/canvas/use-canvas-observer-store";
+import { CanvasObserver } from "@/pages/canvas/canvas-observer";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -149,8 +151,13 @@ export default function CanvasPage() {
     const { id: projectId = "" } = useParams();
     const navigate = useNavigate();
     const [mounted, setMounted] = useState(false);
-    const [access, setAccess] = useState<{ projectId: string; error?: string } | null>(null);
+    const [access, setAccess] = useState<{ projectId: string; error?: string; viewOnly?: boolean } | null>(null);
     const [attempt, setAttempt] = useState(0);
+    const agentControlled = useCanvasObserverStore((state) => state.controls.some((item) => item.projectId === projectId && item.clientId !== state.clientId));
+
+    useEffect(() => {
+        if (agentControlled && access?.projectId === projectId && access.error && !access.viewOnly) setAccess({ ...access, viewOnly: true });
+    }, [access, agentControlled, projectId]);
 
     useEffect(() => {
         setMounted(true);
@@ -162,6 +169,12 @@ export default function CanvasPage() {
         let release: (() => void) | undefined;
         useAgentStore.getState().setAgentState({ canvasAccessError: null });
         setAccess(null);
+        const observer = useCanvasObserverStore.getState();
+        if (observer.controls.some((item) => item.projectId === projectId && item.clientId !== observer.clientId)) {
+            useAgentStore.getState().setAgentState({ canvasAccessError: { projectId, message: "画布正在被 Agent 调用，当前仅可查看", code: "canvas-occupied" } });
+            setAccess({ projectId, viewOnly: true });
+            return () => useAgentStore.getState().setAgentState({ canvasAccessError: null });
+        }
         void acquireCanvasAccess(projectId).then(async (unlock) => {
             release = unlock;
             if (disposed) { unlock(); return; }
@@ -182,6 +195,7 @@ export default function CanvasPage() {
         };
     }, [projectId, attempt]);
 
+    if (IS_DSH_PLUGIN && access?.projectId === projectId && (access.viewOnly || (access.error && agentControlled))) return <CanvasObserver projectId={projectId} onEdit={() => setAttempt((value) => value + 1)} />;
     if (IS_DSH_PLUGIN && access?.projectId === projectId && access.error) return (
         <main className="flex h-full flex-col items-center justify-center gap-4 bg-background p-6 text-center text-foreground" role="alert">
             <p>{access.error}</p>

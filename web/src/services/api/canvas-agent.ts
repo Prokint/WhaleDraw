@@ -1,6 +1,7 @@
 import i18n from "@/i18n";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import type { AgentReasoningEffort } from "@/stores/use-agent-store";
+import type { CanvasAgentControl } from "@/stores/canvas/use-canvas-observer-store";
 
 type AgentConfigResponse = { ok?: boolean; protocolVersion?: number; url?: string; token?: string; hasToken?: boolean };
 const AGENT_MESSAGE_ASSET_PATTERN = /^agent-asset:([a-f0-9]{64})\/([a-f0-9]{64}\.(?:gif|jpe?g|png|webp))$/;
@@ -62,6 +63,10 @@ export async function activateAgentClient(endpoint: string, token: string, clien
 
 export async function postToolResult(endpoint: string, token: string, clientId: string, body: { requestId: string; result?: unknown; error?: string }) {
     await fetchAgentJson(endpoint, token, `/canvas/result?clientId=${encodeURIComponent(clientId)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+}
+
+export function watchDshCanvas(endpoint: string, token: string, clientId: string, projectId: string) {
+    return fetchAgentJson<{ ok: true; result: { canvases: CanvasAgentControl[]; snapshot: CanvasAgentSnapshot | null } }>(endpoint, token, "/agent/dsh/watch", jsonPost({ clientId, ...(projectId ? { projectId } : {}) }));
 }
 
 export async function postCodexApproval(endpoint: string, token: string, requestId: string, decision: "accept" | "acceptForSession" | "decline") {

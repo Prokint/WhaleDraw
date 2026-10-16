@@ -7,19 +7,37 @@ window.__ModuleLoader__.load({
         const appPath = "/plugins/dsh-infinite-canvas/app";
         const canvasRoutes = new Map();
         const sidebarFrames = new Map();
-        const sessionHosts = new Map();
+        const hostId = crypto.randomUUID();
+        let hostEvents;
+        let wantedSessions = new Set();
+        let hostUpdate = Promise.resolve();
+        let disposed = false;
         let focusedFrame;
         let hostContext;
-        const reportOpen = (sessionId, result) => fetch(`${appPath}/host-result?${new URLSearchParams({ sessionId, ...result })}`);
+        const reportOpen = (sessionId, result) => fetch(`${appPath}/host-result?${new URLSearchParams({ hostId, sessionId, ...result })}`);
         const framesOf = (sessionId, mode) => [...sidebarFrames.entries()].filter(([, frame]) => frame.sessionId === sessionId && (!mode || frame.mode === mode));
-        // 每个仍有画布正文的会话各持一条宿主事件流，切换会话不影响后台会话的连接。
-        const sessionHost = (sessionId) => {
-            const existing = sessionHosts.get(sessionId);
-            if (existing) return existing;
-            const events = new EventSource(`${appPath}/host-events?sessionId=${encodeURIComponent(sessionId)}`);
-            sessionHosts.set(sessionId, events);
+        const hostParams = () => {
+            const params = new URLSearchParams({ hostId });
+            for (const sessionId of wantedSessions) params.append("sessionId", sessionId);
+            return params;
+        };
+        const syncHostSessions = () => {
+            if (hostEvents?.readyState !== EventSource.OPEN) return;
+            const params = hostParams();
+            hostUpdate = hostUpdate.then(async () => {
+                if (disposed || hostEvents?.readyState !== EventSource.OPEN) return;
+                const response = await fetch(`${appPath}/host-sessions?${params}`, { cache: "no-store" });
+                if (!response.ok) throw new Error("WhaleDraw 会话订阅同步失败");
+            }).catch((error) => console.error(error));
+        };
+        // 同一窗口的前台与后台会话共用事件流，避免长期 HTTP 连接占满浏览器连接池。
+        const sessionHost = () => {
+            if (hostEvents || disposed) return;
+            const events = hostEvents = new EventSource(`${appPath}/host-events?${hostParams()}`);
+            events.addEventListener("open", syncHostSessions);
             events.addEventListener("inspect-canvas", (event) => {
                 const request = JSON.parse(event.data);
+                const { sessionId } = request;
                 const visible = framesOf(sessionId).filter(([, frame]) => frame.visibility.current);
                 const selected = visible.find(([element]) => element === document.activeElement) || visible.find(([element]) => element === focusedFrame) || visible.at(-1);
                 if (selected) selected[1].inspect(request);
@@ -27,6 +45,7 @@ window.__ModuleLoader__.load({
             });
             events.addEventListener("open-canvas", (event) => {
                 const params = JSON.parse(event.data);
+                const { sessionId } = params;
                 if (hostContext.sidebarRight.mounted.getSnapshot() === sessionId) {
                     try { hostContext.sidebarRight.openTab(params.mode === "workbench" ? workbenchId : panelId, { params }); }
                     catch (error) { void reportOpen(sessionId, { requestId: params.requestId, error: error.message }); }
@@ -37,19 +56,16 @@ window.__ModuleLoader__.load({
                 // 后台会话的画布正文不在屏幕上，标记后由正文在操作前重新读取磁盘状态。
                 frame[1].prepare({ ...params, background: true });
             });
-            return events;
         };
         const syncHosts = () => {
-            if (!hostContext) return;
+            if (!hostContext || disposed) return;
             const wanted = new Set([...sidebarFrames.values()].map((frame) => frame.sessionId));
             const mounted = hostContext.sidebarRight.mounted.getSnapshot();
             if (mounted) wanted.add(mounted);
-            sessionHosts.forEach((events, sessionId) => {
-                if (wanted.has(sessionId)) return;
-                events.close();
-                sessionHosts.delete(sessionId);
-            });
-            wanted.forEach(sessionHost);
+            const changed = wanted.size !== wantedSessions.size || [...wanted].some((sessionId) => !wantedSessions.has(sessionId));
+            wantedSessions = wanted;
+            if (wanted.size) sessionHost();
+            if (changed) syncHostSessions();
         };
 
         function CanvasFrame({ side = false, visible = false, fullscreen = false, sessionId, requestId, mode, projectId }) {
@@ -67,7 +83,7 @@ window.__ModuleLoader__.load({
             };
             const prepare = () => {
                 if (!requestId) return;
-                void fetch(`${appPath}/host-request?${new URLSearchParams({ sessionId, requestId })}`, { cache: "no-store" })
+                void fetch(`${appPath}/host-request?${new URLSearchParams({ hostId, sessionId, requestId })}`, { cache: "no-store" })
                     .then((response) => response.ok ? response.json() : null)
                     .then((request) => {
                         if (request && currentRequest.current === requestId) postPrepare(request);
@@ -180,9 +196,10 @@ window.__ModuleLoader__.load({
                     const unsubscribe = ctx.sidebarRight.mounted.subscribe(syncHosts);
                     syncHosts();
                     return () => {
+                        disposed = true;
                         unsubscribe();
-                        sessionHosts.forEach((events) => events.close());
-                        sessionHosts.clear();
+                        hostEvents?.close();
+                        hostEvents = undefined;
                     };
                 });
             },

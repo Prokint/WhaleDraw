@@ -4,11 +4,13 @@ import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { CanvasNodeContext, CanvasPluginHost } from "@/types/canvas-plugin";
 
+const ignore = () => {};
+
 // Assemble host capabilities, node data, theme, and scale into the context injected into plugin nodes.
 export function buildNodeContext(host: CanvasPluginHost, node: CanvasNodeData, theme: CanvasTheme, scale: number, isSelected = false): CanvasNodeContext {
     const storage = createPluginStorage(getNodePluginId(node.type));
     return {
-        node,
+        node: host.readOnly ? structuredClone(node) : node,
         theme,
         scale,
         isSelected,
@@ -20,11 +22,11 @@ export function buildNodeContext(host: CanvasPluginHost, node: CanvasNodeData, t
         getUpstream: () => host.getUpstream(node.id),
         getDownstream: () => host.getDownstream(node.id),
         applyOps: (ops) => host.applyOps(ops),
-        emit: (event, payload) => emitCanvasEvent(event, payload),
-        on: (event, handler) => onCanvasEvent(event, handler),
+        emit: host.readOnly ? ignore : (event, payload) => emitCanvasEvent(event, payload),
+        on: host.readOnly ? () => ignore : (event, handler) => onCanvasEvent(event, handler),
         ai: host.ai,
         openPanel: () => host.openPanel(node.id),
         closePanel: () => host.closePanel(),
-        storage,
+        storage: host.readOnly ? { get: storage.get, set: async () => {}, remove: async () => {} } : storage,
     };
 }
