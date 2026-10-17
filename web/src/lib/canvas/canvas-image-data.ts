@@ -5,6 +5,22 @@ export type ImageCropRect = {
     height: number;
 };
 
+export async function imageBlobToPng(blob: Blob): Promise<Blob> {
+    if (blob.type === "image/png") return blob;
+    const bitmap = await createImageBitmap(blob);
+    try {
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Canvas unavailable");
+        context.drawImage(bitmap, 0, 0);
+        return await new Promise<Blob>((resolve, reject) => canvas.toBlob((result) => result ? resolve(result) : reject(new Error("PNG conversion failed")), "image/png"));
+    } finally {
+        bitmap.close();
+    }
+}
+
 export type ImageAngleTransform = {
     horizontalAngle: number;
     pitchAngle: number;

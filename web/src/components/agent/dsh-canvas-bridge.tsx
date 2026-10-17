@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { App } from "antd";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { runSiteTool, isSiteTool } from "@/lib/agent/agent-site-tools";
@@ -13,6 +14,7 @@ import { canvasStorageChanged, flushCanvasStorage, reloadCanvasStorage, useCanva
 type BridgeConfig = { url: string; token: string };
 
 export function DshCanvasBridge() {
+    const { message } = App.useApp();
     const navigate = useNavigate();
     const { pathname } = useLocation();
     const route = useRef(pathname);
@@ -129,7 +131,13 @@ export function DshCanvasBridge() {
         };
         routeChanged.current = prepareProject;
         const onPrepare = (event: MessageEvent) => {
-            if (event.origin !== window.location.origin || event.source !== window.parent || typeof event.data?.requestId !== "string") return;
+            if (event.origin !== window.location.origin || event.source !== window.parent) return;
+            if (event.data?.type === "dsh-infinite-canvas:added-to-chat") {
+                if (event.data.error) message.error(String(event.data.error));
+                else message.success(i18n.t("canvas.nodeToolbar.addedToChat"));
+                return;
+            }
+            if (typeof event.data?.requestId !== "string") return;
             if (event.data.type === "dsh-infinite-canvas:inspect") {
                 inspections.set(event.data.requestId, typeof event.data.defaultProjectId === "string" ? event.data.defaultProjectId : "");
                 reportInspections();
@@ -282,7 +290,7 @@ export function DshCanvasBridge() {
             setAgentState({ enabled: false, connected: false });
             useCanvasObserverStore.setState({ connected: false, controls: [], clientId: "" });
         };
-    }, [navigate, setAgentState]);
+    }, [message, navigate, setAgentState]);
 
     return null;
 }

@@ -130,6 +130,39 @@ window.__ModuleLoader__.load({
                         void reportOpen(sessionId, { requestId: preparedId, ...(error ? { error, ...(errorCode ? { errorCode } : {}) } : { clientId, ...(projectId ? { projectId } : {}) }) });
                         return;
                     }
+                    if (event.data?.type === "dsh-infinite-canvas:add-to-chat") {
+                        try {
+                            const currentSessionId = hostContext.sidebarRight.mounted.getSnapshot();
+                            if (!currentSessionId || (sessionId && sessionId !== currentSessionId)) throw new Error("当前 DSH 会话已切换，请返回对应对话后重试");
+                            const actx = hostContext.sessions.scope(sessionId || currentSessionId);
+                            const input = hostContext.conversation.input.for(actx);
+                            if (event.data.kind === "text" && typeof event.data.text === "string" && event.data.text.trim()) {
+                                const { draft, draftRev, occurrences } = input.state.getSnapshot();
+                                const end = draft.length - occurrences.reduce((length, item) => length + item.length - 1, 0);
+                                if (actx.bail(actx, "slash/input-insert-text", { text: `${draft ? "\n" : ""}${event.data.text}`, span: { start: end, end, draftRev } }) !== true) throw new Error("对话输入框暂时无法添加文字，请重试");
+                            } else {
+                                const image = event.data.kind === "image" && event.data.blob instanceof Blob;
+                                const video = event.data.kind === "video" && event.data.blob instanceof Blob;
+                                const sourceFile = event.data.kind === "file" && typeof event.data.text === "string" && event.data.text.trim();
+                                if (!image && !video && !sourceFile) throw new Error("画布节点内容无效");
+                                const mimeType = image || video ? event.data.mimeType || event.data.blob.type : event.data.mimeType;
+                                const title = typeof event.data.name === "string" && event.data.name.trim() || "画布节点";
+                                const videoExtension = video && mimeType?.startsWith("video/") ? title.match(/\.(mp4|m4v|webm|mov|ogv|ogg|mkv|avi|3gp|flv)$/i)?.[1].toLowerCase() || ({ "video/mp4": "mp4", "video/webm": "webm", "video/quicktime": "mov", "video/ogg": "ogv", "video/x-matroska": "mkv", "video/x-msvideo": "avi" })[mimeType] || mimeType.slice(6).replace(/^x-/, "").match(/^[a-z0-9]+$/i)?.[0] : undefined;
+                                const extension = image ? ({ "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" })[mimeType] : video ? videoExtension : ({ "text/markdown": "md", "image/svg+xml": "svg", "text/html": "html" })[mimeType];
+                                if (!extension) throw new Error(image ? "DSH 对话仅支持 PNG、JPEG、WebP 和 GIF 图片" : "不支持该节点文件格式");
+                                const name = `${title.replace(/\.(png|jpe?g|webp|gif|md|svg|html|mp4|m4v|webm|mov|ogv|ogg|mkv|avi|3gp|flv)$/i, "")}.${extension}`;
+                                const drafts = hostContext.conversation.createDrafts(sessionId || currentSessionId, [new File([image || video ? event.data.blob : event.data.text], name, { type: mimeType })]);
+                                if (!input.addAttachments(drafts.map((draft) => draft.id))) {
+                                    hostContext.conversation.releaseDraftAttachments(drafts);
+                                    throw new Error("对话输入框暂时无法添加附件，请重试");
+                                }
+                            }
+                            frame.current.contentWindow.postMessage({ type: "dsh-infinite-canvas:added-to-chat" }, window.location.origin);
+                        } catch (error) {
+                            frame.current.contentWindow.postMessage({ type: "dsh-infinite-canvas:added-to-chat", error: error instanceof Error ? error.message : String(error) }, window.location.origin);
+                        }
+                        return;
+                    }
                     if (event.data?.type !== "dsh-infinite-canvas:open-chat") return;
                     const location = frame.current.contentWindow.location;
                     const currentSessionId = sessionId || hostContext.sidebarRight.mounted.getSnapshot();
@@ -177,7 +210,7 @@ window.__ModuleLoader__.load({
         }
 
         return {
-            inject: ["slots", "layout", "sidebarRight", "sidebarRightTabs"],
+            inject: ["slots", "layout", "sidebarRight", "sidebarRightTabs", "sessions", "conversation"],
             apply(ctx) {
                 hostContext = ctx;
                 ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: panelId }, CanvasPage));
