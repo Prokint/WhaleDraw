@@ -8,16 +8,16 @@ import { useTranslation } from "react-i18next";
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createVideoGenerationTask, isVideoTaskFailed, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
-import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { ensureImagePreview, uploadImage } from "@/services/image-storage";
-import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { defaultConfig, useConfigStore, useEffectiveConfig, withLocalProxy } from "@/stores/use-config-store";
+import { ensureImagePreview, getImageBlob, imageToDataUrl, uploadImage } from "@/services/image-storage";
+import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
+import { cropDataUrl, imageBlobToPng, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
 import { captureVideoFrame, type VideoFramePosition } from "@/lib/canvas/canvas-video-frame";
 import { App, Button, Modal } from "antd";
@@ -46,10 +46,12 @@ import { useAgentStore } from "@/stores/use-agent-store";
 import { canvasStorageChanged, flushCanvasStorage, reloadCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { IS_DSH_PLUGIN, openDshChat } from "@/constant/env";
 import { acquireCanvasAccess } from "@/lib/canvas/canvas-exclusive-access";
+import { useCanvasObserverStore } from "@/stores/canvas/use-canvas-observer-store";
+import { CanvasObserver } from "@/pages/canvas/canvas-observer";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { exportCanvasNodes, exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { applyGroupSelection, applyUngroupSelection, canGroupSelectedNodes, canUngroupSelectedNodes, collectGroupMemberNodes, findContainingGroupId, findGroupDropTarget, focusViewportForNode, getConnectionTargetAnchor, getGroupWrapRect, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
@@ -149,8 +151,13 @@ export default function CanvasPage() {
     const { id: projectId = "" } = useParams();
     const navigate = useNavigate();
     const [mounted, setMounted] = useState(false);
-    const [access, setAccess] = useState<{ projectId: string; error?: string } | null>(null);
+    const [access, setAccess] = useState<{ projectId: string; error?: string; viewOnly?: boolean } | null>(null);
     const [attempt, setAttempt] = useState(0);
+    const agentControlled = useCanvasObserverStore((state) => state.controls.some((item) => item.projectId === projectId && item.clientId !== state.clientId));
+
+    useEffect(() => {
+        if (agentControlled && access?.projectId === projectId && access.error && !access.viewOnly) setAccess({ ...access, viewOnly: true });
+    }, [access, agentControlled, projectId]);
 
     useEffect(() => {
         setMounted(true);
@@ -162,6 +169,12 @@ export default function CanvasPage() {
         let release: (() => void) | undefined;
         useAgentStore.getState().setAgentState({ canvasAccessError: null });
         setAccess(null);
+        const observer = useCanvasObserverStore.getState();
+        if (observer.controls.some((item) => item.projectId === projectId && item.clientId !== observer.clientId)) {
+            useAgentStore.getState().setAgentState({ canvasAccessError: { projectId, message: "画布正在被 Agent 调用，当前仅可查看", code: "canvas-occupied" } });
+            setAccess({ projectId, viewOnly: true });
+            return () => useAgentStore.getState().setAgentState({ canvasAccessError: null });
+        }
         void acquireCanvasAccess(projectId).then(async (unlock) => {
             release = unlock;
             if (disposed) { unlock(); return; }
@@ -182,6 +195,7 @@ export default function CanvasPage() {
         };
     }, [projectId, attempt]);
 
+    if (IS_DSH_PLUGIN && access?.projectId === projectId && (access.viewOnly || (access.error && agentControlled))) return <CanvasObserver projectId={projectId} onEdit={() => setAttempt((value) => value + 1)} />;
     if (IS_DSH_PLUGIN && access?.projectId === projectId && access.error) return (
         <main className="flex h-full flex-col items-center justify-center gap-4 bg-background p-6 text-center text-foreground" role="alert">
             <p>{access.error}</p>
@@ -772,6 +786,7 @@ function InfiniteCanvasPage() {
     const previewContent = previewImageId ? previewNode?.metadata?.images?.find((image) => image.id === previewImageId)?.content : previewNode?.metadata?.content;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const selectedNodes = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id)), [nodes, selectedNodeIds]);
+    const downloadableSelectedNodes = selectedNodes.filter((node) => node.type === CanvasNodeType.Text || ((node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) && node.metadata?.content));
     const canGroupSelection = canGroupSelectedNodes(selectedNodeIds, nodes);
     const canUngroupSelection = canUngroupSelectedNodes(selectedNodeIds, nodes);
     const activeNodeId = hasMultipleSelectedNodes ? null : hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
@@ -1835,6 +1850,69 @@ function InfiniteCanvasPage() {
         if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
         saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : imageExtension(node.metadata.content)}`);
     }, []);
+
+    const downloadSelectedNodes = useCallback(async () => {
+        if (!downloadableSelectedNodes.length) return;
+        const hide = message.loading(t("canvas.sidePanel.exporting"), 0);
+        try {
+            await exportCanvasNodes(downloadableSelectedNodes, t("canvas.sidePanel.exportName", { count: downloadableSelectedNodes.length }));
+            message.success(t("canvas.sidePanel.exported", { count: downloadableSelectedNodes.length }));
+        } catch (error) {
+            console.error(error);
+            message.error(t("canvas.sidePanel.exportFailed"));
+        } finally {
+            hide();
+        }
+    }, [downloadableSelectedNodes, message, t]);
+
+    const addNodeToDshChat = useCallback(async (node: CanvasNodeData) => {
+        if (node.type === CanvasNodeType.Text) {
+            if (!node.metadata?.content?.trim()) return message.warning(t("canvas.nodeToolbar.emptyChatText"));
+            window.parent.postMessage({ type: "dsh-infinite-canvas:add-to-chat", kind: "text", text: node.metadata.content }, window.location.origin);
+            return;
+        }
+        const mimeType = ({ "markdown:doc": "text/markdown", "svg:vector": "image/svg+xml", "html:render": "text/html" } as Record<string, string>)[node.type];
+        if (mimeType) {
+            if (!node.metadata?.content?.trim()) return message.warning(t("canvas.nodeToolbar.emptyChatText"));
+            window.parent.postMessage({ type: "dsh-infinite-canvas:add-to-chat", kind: "file", text: node.metadata.content, mimeType, name: node.title }, window.location.origin);
+            return;
+        }
+        const isVideo = node.type === CanvasNodeType.Video;
+        if (!node.metadata?.content) return message.warning(t(isVideo ? "canvas.nodeToolbar.emptyChatVideo" : "canvas.nodeToolbar.emptyChatImage"));
+        try {
+            if (isVideo) {
+                const stored = node.metadata.storageKey ? await getMediaBlob(node.metadata.storageKey) : null;
+                const response = stored ? null : await fetch(withLocalProxy(node.metadata.content));
+                if (response && !response.ok) throw new Error("Video unavailable");
+                const blob = stored || await response!.blob();
+                window.parent.postMessage({ type: "dsh-infinite-canvas:add-to-chat", kind: "video", blob, mimeType: node.metadata.mimeType || blob.type || "video/mp4", name: node.title }, window.location.origin);
+                return;
+            }
+            const stored = node.metadata.storageKey ? await getImageBlob(node.metadata.storageKey) : null;
+            const dataUrl = stored ? "" : await imageToDataUrl({ url: node.metadata.content });
+            const blob = stored || await (await fetch(dataUrl)).blob();
+            window.parent.postMessage({ type: "dsh-infinite-canvas:add-to-chat", kind: "image", blob, mimeType: node.metadata.mimeType || blob.type, name: node.title }, window.location.origin);
+        } catch {
+            message.error(t(isVideo ? "canvas.nodeToolbar.addVideoToChatFailed" : "canvas.nodeToolbar.addToChatFailed"));
+        }
+    }, [message, t]);
+
+    const copyImageNodeToClipboard = useCallback((node: CanvasNodeData) => {
+        const content = node.metadata?.content;
+        const storageKey = node.metadata?.storageKey;
+        if (!content || !navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+            message.error(t("canvas.projectPage.copyImageFailed"));
+            return;
+        }
+        const png = (async () => {
+            const stored = storageKey ? await getImageBlob(storageKey) : null;
+            const blob = stored || await (await fetch(await imageToDataUrl({ url: content }))).blob();
+            return imageBlobToPng(blob);
+        })();
+        void navigator.clipboard.write([new ClipboardItem({ "image/png": png })])
+            .then(() => message.success(t("common.copied")))
+            .catch(() => message.error(t("canvas.projectPage.copyImageFailed")));
+    }, [message, t]);
 
     const downloadBatchImage = useCallback((node: CanvasNodeData, imageId: string) => {
         const image = node.metadata?.images?.find((item) => item.id === imageId);
@@ -3367,6 +3445,7 @@ function InfiniteCanvasPage() {
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
+                    onAddToChat={(node) => void addNodeToDshChat(node)}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
                     onCrop={(node) => setCropNodeId(node.id)}
                     onSplit={(node) => setSplitNodeId(node.id)}
@@ -3388,8 +3467,10 @@ function InfiniteCanvasPage() {
                         showToolbar={!isNodeDragging && !isNodeResizing}
                         canGroup={canGroupSelection}
                         canUngroup={canUngroupSelection}
+                        canDownload={downloadableSelectedNodes.length > 0}
                         onGroup={groupSelection}
                         onUngroup={ungroupSelection}
+                        onDownload={() => void downloadSelectedNodes()}
                     />
                 ) : null}
 
@@ -3426,6 +3507,7 @@ function InfiniteCanvasPage() {
                     <CanvasNodeContextMenu
                         menu={contextMenu}
                         canCaptureVideoFrame={contextMenuNode?.type === CanvasNodeType.Video && Boolean(contextMenuNode.metadata?.content)}
+                        canCopyImage={contextMenuNode?.type === CanvasNodeType.Image && Boolean(contextMenuNode.metadata?.content)}
                         canGroup={contextMenu.type === "node" && canGroupSelection}
                         canUngroup={contextMenu.type === "node" && canUngroupSelection}
                         onClose={() => setContextMenu(null)}
@@ -3436,6 +3518,10 @@ function InfiniteCanvasPage() {
                         onDuplicate={() => {
                             if (contextMenu.type !== "node") return;
                             duplicateNode(contextMenu.nodeId);
+                            setContextMenu(null);
+                        }}
+                        onCopyImage={() => {
+                            if (contextMenuNode) copyImageNodeToClipboard(contextMenuNode);
                             setContextMenu(null);
                         }}
                         onGroup={groupSelection}

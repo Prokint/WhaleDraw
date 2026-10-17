@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import sirv from "sirv";
 import { z } from "zod";
 import { loadConfig } from "@basketikun/canvas-agent/dist/config.js";
+import { dshToolDefinitions } from "@basketikun/canvas-agent/dist/agent/dsh.js";
 import { appPath, installCanvasLauncher } from "./canvas-launcher.mjs";
 import { installPluginUpdater } from "./plugin-update.mjs";
 
@@ -37,7 +38,12 @@ export async function apply(ctx) {
             child.once("exit", () => reject(new Error("Canvas Agent 启动失败")));
         });
     };
-    const ensureReady = () => agentReady ||= ensureAgent().then(() => loadConfig()).finally(() => { agentReady = undefined; });
+    const ensureReady = () => agentReady ||= ensureAgent().then(async () => {
+        const config = loadConfig();
+        const response = await fetch(`${config.url}/health`);
+        if (!response.ok || !(await response.json()).dshChannel) throw new Error("Canvas Agent 不支持 DSH 专用通道，请安装配套的修复版 Agent 后重启 DSH");
+        return config;
+    }).finally(() => { agentReady = undefined; });
     const domain = await ctx.storageDomain.open({
         name: "dsh_infinite_canvas", version: 1,
         tables: { sessions: { valueSchema: z.discriminatedUnion("mode", [
@@ -46,7 +52,7 @@ export async function apply(ctx) {
         ]) } },
     });
     ctx.effect(() => () => domain.close());
-    installCanvasLauncher(ctx, ensureReady, domain.table("sessions"));
+    installCanvasLauncher(ctx, ensureReady, domain.table("sessions"), dshToolDefinitions);
     installPluginUpdater(ctx);
     ctx.effect(() => () => { disposed = true; child?.kill(); });
     const serve = sirv(appDirectory, { single: true, etag: true, dev: true });

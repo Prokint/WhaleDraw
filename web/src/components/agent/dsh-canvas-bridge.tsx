@@ -1,16 +1,20 @@
 import { useEffect, useRef } from "react";
+import { App } from "antd";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { runSiteTool, isSiteTool } from "@/lib/agent/agent-site-tools";
 import { randomId } from "@/lib/utils";
 import i18n from "@/i18n";
-import { activateAgentClient, postState, postToolResult } from "@/services/api/canvas-agent";
+import { postState, postToolResult, watchDshCanvas } from "@/services/api/canvas-agent";
 import { useAgentStore, type AgentPendingToolCall } from "@/stores/use-agent-store";
+import { useCanvasObserverStore, type CanvasAgentControl } from "@/stores/canvas/use-canvas-observer-store";
+import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { canvasStorageChanged, flushCanvasStorage, reloadCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 
 type BridgeConfig = { url: string; token: string };
 
 export function DshCanvasBridge() {
+    const { message } = App.useApp();
     const navigate = useNavigate();
     const { pathname } = useLocation();
     const route = useRef(pathname);
@@ -27,6 +31,21 @@ export function DshCanvasBridge() {
         let disposed = false;
         let stateTimer: ReturnType<typeof setTimeout> | undefined;
         let config: BridgeConfig | undefined;
+        let watchUpdate = Promise.resolve();
+        const syncWatch = () => {
+            const projectId = useCanvasObserverStore.getState().projectId;
+            watchUpdate = watchUpdate.then(async () => {
+                if (disposed || !config || !useCanvasObserverStore.getState().connected) return;
+                await watchDshCanvas(config.url, config.token, clientId, projectId);
+                if (disposed || useCanvasObserverStore.getState().projectId !== projectId) return;
+                useCanvasObserverStore.setState({ error: "" });
+            }).catch((error) => {
+                if (!disposed && useCanvasObserverStore.getState().projectId === projectId) useCanvasObserverStore.setState({ error: error instanceof Error ? error.message : "无法读取画布状态" });
+            });
+        };
+        const unsubscribeObserver = useCanvasObserverStore.subscribe((state, previous) => {
+            if (state.projectId !== previous.projectId) syncWatch();
+        });
         const inspections = new Map<string, string>();
         let prepareRequestId = "";
         let lastRequestId = "";
@@ -112,7 +131,13 @@ export function DshCanvasBridge() {
         };
         routeChanged.current = prepareProject;
         const onPrepare = (event: MessageEvent) => {
-            if (event.origin !== window.location.origin || event.source !== window.parent || typeof event.data?.requestId !== "string") return;
+            if (event.origin !== window.location.origin || event.source !== window.parent) return;
+            if (event.data?.type === "dsh-infinite-canvas:added-to-chat") {
+                if (event.data.error) message.error(String(event.data.error));
+                else message.success(i18n.t("canvas.nodeToolbar.addedToChat"));
+                return;
+            }
+            if (typeof event.data?.requestId !== "string") return;
             if (event.data.type === "dsh-infinite-canvas:inspect") {
                 inspections.set(event.data.requestId, typeof event.data.defaultProjectId === "string" ? event.data.defaultProjectId : "");
                 reportInspections();
@@ -168,6 +193,7 @@ export function DshCanvasBridge() {
             const bridge = config;
             if (!bridge) return;
             try {
+                if (call.projectId && useAgentStore.getState().canvasContext?.snapshot.projectId !== call.projectId) throw new Error("请求所属画布已切换，请重新连接当前会话");
                 const accessError = useAgentStore.getState().canvasAccessError;
                 if (accessError && call.name.startsWith("canvas_") && call.name !== "canvas_list_projects") throw new Error(accessError.message);
                 let result: unknown;
@@ -220,15 +246,24 @@ export function DshCanvasBridge() {
                     return;
                 }
                 setAgentState({ enabled: true, connected: true, activity: "已连接", connectError: "" });
+                useCanvasObserverStore.setState({ clientId, connected: true, error: "" });
+                syncWatch();
                 publishState();
-                void activateAgentClient(value.url, value.token, clientId);
                 prepareProject();
             });
             source.addEventListener("tool_call", (event) => {
                 if (!disposed) void runTool(JSON.parse(event.data) as AgentPendingToolCall);
             });
+            source.addEventListener("dsh_canvases", (event) => {
+                if (!disposed) useCanvasObserverStore.setState({ controls: (JSON.parse(event.data) as { canvases: CanvasAgentControl[] }).canvases });
+            });
+            source.addEventListener("dsh_canvas_state", (event) => {
+                const { projectId, snapshot } = JSON.parse(event.data) as { projectId: string; snapshot: CanvasAgentSnapshot | null };
+                if (!disposed && projectId === useCanvasObserverStore.getState().projectId && snapshot) useCanvasObserverStore.setState({ snapshot, error: "" });
+            });
             source.onerror = () => {
                 if (!disposed) {
+                    useCanvasObserverStore.setState({ connected: false, controls: [] });
                     setAgentState({ connected: false, activity: "连接中" });
                     reportPrepare({ error: "无法连接本地画布服务" });
                 }
@@ -237,6 +272,7 @@ export function DshCanvasBridge() {
             if (!disposed) {
                 const text = error instanceof Error ? error.message : String(error);
                 setAgentState({ enabled: false, connected: false, connectError: text });
+                useCanvasObserverStore.setState({ connected: false, controls: [], error: text });
                 reportPrepare({ error: text });
             }
         });
@@ -245,14 +281,16 @@ export function DshCanvasBridge() {
             routeChanged.current = () => {};
             unsubscribe();
             unsubscribeCanvas();
+            unsubscribeObserver();
             window.removeEventListener("message", onPrepare);
             window.removeEventListener("pointerdown", notifyFocus);
             window.removeEventListener("focus", notifyFocus);
             if (stateTimer) clearTimeout(stateTimer);
             source?.close();
             setAgentState({ enabled: false, connected: false });
+            useCanvasObserverStore.setState({ connected: false, controls: [], clientId: "" });
         };
-    }, [navigate, setAgentState]);
+    }, [message, navigate, setAgentState]);
 
     return null;
 }

@@ -23,6 +23,54 @@ test("MCP 读取当前激活网页的画布", async (t) => {
     assert.equal(field(await session.callTool("canvas_get_state", {}), "projectId"), "canvas-second");
 });
 
+test("显式工具目标隔离并发读写，不受其他会话激活或 turn 绑定影响", async (t) => {
+    const session = new CanvasSession();
+    const first = connect(session, "first");
+    const second = connect(session, "second");
+    t.after(() => { first.close(); second.close(); });
+    session.updateState(snapshot("canvas-first"), "first");
+    session.updateState(snapshot("canvas-second"), "second");
+    session.bindClient("second");
+    session.activateClient("second");
+    const [a, b] = await Promise.all([
+        session.callToolForClient("first", "canvas_get_state", {}),
+        session.callToolForClient("second", "canvas_get_state", {}),
+    ]);
+    assert.equal(field(a, "projectId"), "canvas-first");
+    assert.equal(field(b, "projectId"), "canvas-second");
+    const writeA = session.callToolForClient("first", "canvas_create_text_node", { text: "A" });
+    const writeB = session.callToolForClient("second", "canvas_create_text_node", { text: "B" });
+    const requestA = first.event("tool_call");
+    const requestB = second.event("tool_call");
+    assert.ok(requestA);
+    assert.ok(requestB);
+    assert.equal(session.resolveResult("second", { requestId: String(field(requestA, "requestId")), result: "wrong" }), false);
+    session.resolveResult("second", { requestId: String(field(requestB, "requestId")), result: "B" });
+    session.resolveResult("first", { requestId: String(field(requestA, "requestId")), result: "A" });
+    assert.deepEqual(await Promise.all([writeA, writeB]), ["A", "B"]);
+    assert.equal(field(await session.callTool("canvas_get_state", {}), "projectId"), "canvas-second");
+});
+
+test("指定连接断开或无效时拒绝调用，不回退到其他画布，重连后恢复", async (t) => {
+    const session = new CanvasSession();
+    const first = connect(session, "first");
+    const second = connect(session, "second");
+    t.after(() => { first.close(); second.close(); });
+    session.updateState(snapshot("canvas-first"), "first");
+    session.updateState(snapshot("canvas-second"), "second");
+    session.activateClient("second");
+    first.close();
+    for (const id of ["first", "missing", ""]) {
+        await assert.rejects(session.callToolForClient(id, "canvas_get_state", {}), /目标画布连接已断开/);
+        await assert.rejects(session.callToolForClient(id, "canvas_create_text_node", { text: "blocked" }), /目标画布连接已断开/);
+    }
+    assert.equal(second.event("tool_call"), undefined);
+    const reconnected = connect(session, "first");
+    t.after(() => reconnected.close());
+    session.updateState(snapshot("canvas-first"), "first");
+    assert.equal(field(await session.callToolForClient("first", "canvas_get_state", {}), "projectId"), "canvas-first");
+});
+
 test("按精确 clientId 读取画布快照，不受当前焦点影响", (t) => {
     const session = new CanvasSession();
     const first = connect(session, "first");

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { ServerResponse } from "node:http";
 
 import type { AgentAttachment } from "../agent/types.js";
@@ -50,6 +51,7 @@ export class CanvasSession {
     private codexReplayActiveItems = new Set<string>();
     private codexMutationBusy = false;
     private activeClientId = "";
+    private toolClient = new AsyncLocalStorage<{ clientId: string; projectId?: string }>();
     private boundClientId = "";
     private focusSequence = 0;
     private codexState: CodexState = { busy: false, threadId: "", turnId: "" };
@@ -74,12 +76,12 @@ export class CanvasSession {
 
     /** 获取当前 turn 绑定或最近激活的网页客户端。 */
     private get targetClientId() {
-        return this.boundClientId || this.activeClientId;
+        return this.toolClient.getStore()?.clientId ?? (this.boundClientId || this.activeClientId);
     }
 
     /** 返回 Canvas Agent 当前连接状态。 */
     health() {
-        return { ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, hasCanvas: Boolean(this.canvasState), clients: this.clients.size, codexBusy: this.codexState.busy, conversation: this.conversationStateSnapshot };
+        return { ok: true, protocolVersion: AGENT_PROTOCOL_VERSION, dshChannel: true, hasCanvas: Boolean(this.canvasState), clients: this.clients.size, codexBusy: this.codexState.busy, conversation: this.conversationStateSnapshot };
     }
 
     /** 返回 Codex 是否正在执行任务。 */
@@ -386,6 +388,12 @@ export class CanvasSession {
         this.clients.forEach((client) => sendEvent(client, type, payload));
     }
 
+    /** 向指定网页发送事件，观察快照不广播给无关页面。 */
+    emitClient(clientId: string, type: string, payload: unknown) {
+        const client = this.clients.get(clientId);
+        if (client) sendEvent(client, type, payload);
+    }
+
     /** 向全部网页广播带线程归属的事件。 */
     emitThread(type: string, threadId: string, payload: Record<string, unknown> = {}) {
         const data: Record<string, unknown> = { ...payload, threadId };
@@ -434,6 +442,12 @@ export class CanvasSession {
             const eventTurnId = String(event?.payload.turnId || event?.payload.turn_id || "");
             if (eventThreadId === threadId && eventTurnId === turnId) this.codexReplayActiveItems.delete(key);
         });
+    }
+
+    /** 在本次异步调用中固定目标，不改变 Codex/Claude 的活动页和 turn 绑定。 */
+    async callToolForClient(clientId: string, name: unknown, rawInput: unknown) {
+        if (typeof clientId !== "string" || !this.clients.has(clientId)) throw new Error("目标画布连接已断开，请重新连接当前会话");
+        return this.toolClient.run({ clientId, projectId: this.canvasStateForClient(clientId)?.projectId }, () => this.callTool(name, rawInput));
     }
 
     /** 校验工具参数并将调用分派到当前目标网页。 */
@@ -491,7 +505,7 @@ export class CanvasSession {
         const clientId = this.targetClientId;
         const client = this.clients.get(clientId);
         if (!client) throw new Error("当前没有已连接画布");
-        sendEvent(client, "tool_call", { requestId, name, input });
+        sendEvent(client, "tool_call", { requestId, name, input, ...(this.toolClient.getStore()?.projectId ? { projectId: this.toolClient.getStore()!.projectId } : {}) });
         logger.debug("Canvas tool request sent", { requestId, name, input, clientId });
         return await new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
