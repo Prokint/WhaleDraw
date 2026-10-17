@@ -14,6 +14,11 @@ function setup(t, fetchResponse = async () => ({ ok: true, json: async () => nul
     const frames = [];
     const listeners = new Set();
     const subscribers = new Set();
+    const drafts = [];
+    const files = [];
+    const textEdits = [];
+    const inputState = { draft: "已有内容", draftRev: 1, occurrences: [] };
+    const input = { state: { getSnapshot: () => inputState }, addAttachments: (ids) => { drafts.push(...ids); return true; }, focus() {} };
     let mounted = "chat-a";
     let effects;
     let plugin;
@@ -43,8 +48,12 @@ function setup(t, fetchResponse = async () => ({ ok: true, json: async () => nul
             },
         })); } },
     };
+    class File extends Blob {
+        constructor(parts, name, options) { super(parts, options); this.name = name; }
+    }
     vm.runInNewContext(source, {
         window, document: {}, EventSource, URLSearchParams, crypto: { randomUUID: () => "test-window" }, console,
+        Blob, File,
         fetch(url) { const request = new URL(url, "http://localhost"); requests.push(request); return fetchResponse(request); },
     });
     plugin.apply({
@@ -58,11 +67,17 @@ function setup(t, fetchResponse = async () => ({ ok: true, json: async () => nul
             mounted: { getSnapshot: () => mounted, subscribe(callback) { subscribers.add(callback); return () => subscribers.delete(callback); } },
             openTab() {},
         },
+        sessions: { scope(id) { return { bail(_ctx, type, payload) { textEdits.push({ id, type, payload }); return true; } }; } },
+        conversation: {
+            input: { for: () => input },
+            createDrafts(id, inputs) { files.push(...inputs); return inputs.map((file) => ({ id: `${id}:${file.name}`, file })); },
+            releaseDraftAttachments() {},
+        },
     });
     const dispose = () => { for (const cleanup of disposers.splice(0).reverse()) cleanup(); };
     t.after(() => { dispose(); for (const frame of frames) frame.unmount(); });
     return {
-        streams, requests, dispose,
+        streams, requests, drafts, files, textEdits, inputState, dispose,
         select(sessionId) { mounted = sessionId; for (const subscriber of subscribers) subscriber(); },
         frame(sessionId, visible = false, params = {}) {
             effects = [];
@@ -135,4 +150,42 @@ test("复用事件按 sessionId 投递，后台 prepare 和结果回报保留窗
     assert.equal(report.searchParams.get("hostId"), "test-window");
     const request = fixture.requests.find((request) => request.pathname.endsWith("/host-request"));
     assert.equal(request.searchParams.get("hostId"), "test-window");
+});
+
+test("画布节点内容只添加到当前 DSH 会话草稿，不自动发送", async (t) => {
+    const fixture = setup(t);
+    const a = fixture.frame("chat-a", true);
+    fixture.message(a, { type: "dsh-infinite-canvas:add-to-chat", kind: "text", text: "新文字" });
+    assert.deepEqual(fixture.textEdits.map(({ id, payload }) => [id, payload.text, payload.span.start]), [["chat-a", "\n新文字", 4]]);
+    assert.equal(a.element.messages.at(-1).type, "dsh-infinite-canvas:added-to-chat");
+
+    fixture.inputState.draft = "引用 @path";
+    fixture.inputState.occurrences = [{ length: 5 }];
+    fixture.message(a, { type: "dsh-infinite-canvas:add-to-chat", kind: "text", text: "继续" });
+    assert.equal(fixture.textEdits.at(-1).payload.span.start, 4);
+
+    fixture.message(a, { type: "dsh-infinite-canvas:add-to-chat", kind: "image", blob: new Blob(["image"], { type: "image/png" }), name: "素材" });
+    assert.deepEqual(fixture.drafts, ["chat-a:素材.png"]);
+
+    for (const [mimeType, name] of [["text/markdown", "文档"], ["image/svg+xml", "矢量图"], ["text/html", "页面"]]) {
+        fixture.message(a, { type: "dsh-infinite-canvas:add-to-chat", kind: "file", text: "节点源码", mimeType, name });
+    }
+    assert.deepEqual(fixture.drafts, ["chat-a:素材.png", "chat-a:文档.md", "chat-a:矢量图.svg", "chat-a:页面.html"]);
+    assert.deepEqual(fixture.files.slice(1).map(({ type }) => type), ["text/markdown", "image/svg+xml", "text/html"]);
+    assert.deepEqual(await Promise.all(fixture.files.slice(1).map((file) => file.text())), ["节点源码", "节点源码", "节点源码"]);
+    fixture.message(a, { type: "dsh-infinite-canvas:add-to-chat", kind: "video", blob: new Blob(["video"], { type: "video/webm" }), name: "片段.webm" });
+    assert.equal(fixture.drafts.at(-1), "chat-a:片段.webm");
+    assert.equal(fixture.files.at(-1).type, "video/webm");
+    assert.equal(await fixture.files.at(-1).text(), "video");
+    fixture.message(a, { type: "dsh-infinite-canvas:add-to-chat", kind: "video", blob: new Blob(["mp4"], { type: "video/mp4" }), name: "生成视频" });
+    assert.equal(fixture.drafts.at(-1), "chat-a:生成视频.mp4");
+    fixture.message(a, { type: "dsh-infinite-canvas:add-to-chat", kind: "video", blob: new Blob(["video"], { type: "text/html" }), name: "错误格式" });
+    assert.match(a.element.messages.at(-1).error, /不支持该节点文件格式/);
+    assert.equal(fixture.drafts.length, 6);
+    assert.equal(fixture.textEdits.length, 2);
+
+    fixture.select("chat-b");
+    fixture.message(a, { type: "dsh-infinite-canvas:add-to-chat", kind: "text", text: "不可串线" });
+    assert.match(a.element.messages.at(-1).error, /会话已切换/);
+    assert.equal(fixture.textEdits.length, 2);
 });

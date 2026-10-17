@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Group, Ungroup } from "lucide-react";
+import { Download, Group, Ungroup } from "lucide-react";
 import { Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -16,16 +16,20 @@ export function CanvasSelectionToolbar({
     showToolbar,
     canGroup,
     canUngroup,
+    canDownload,
     onGroup,
     onUngroup,
+    onDownload,
 }: {
     nodes: CanvasNodeData[];
     viewport: ViewportTransform;
     showToolbar: boolean;
     canGroup: boolean;
     canUngroup: boolean;
+    canDownload: boolean;
     onGroup: () => void;
     onUngroup: () => void;
+    onDownload: () => void;
 }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -36,7 +40,7 @@ export function CanvasSelectionToolbar({
     const top = viewport.y + bounds.top * viewport.k - SELECTION_PAD;
     const width = (bounds.right - bounds.left) * viewport.k + SELECTION_PAD * 2;
     const height = (bounds.bottom - bounds.top) * viewport.k + SELECTION_PAD * 2;
-    const showActions = showToolbar && (canGroup || canUngroup);
+    const showActions = showToolbar && (canGroup || canUngroup || canDownload);
 
     return (
         <>
@@ -65,6 +69,7 @@ export function CanvasSelectionToolbar({
                 >
                     {canGroup ? <SelectionAction title={t("canvas.nodeToolbar.groupTitle")} label={t("canvas.nodeToolbar.group")} icon={<Group className="size-4" />} onClick={onGroup} /> : null}
                     {canUngroup ? <SelectionAction title={t("canvas.nodeToolbar.ungroupTitle")} label={t("canvas.nodeToolbar.ungroup")} icon={<Ungroup className="size-4" />} onClick={onUngroup} /> : null}
+                    {canDownload ? <SelectionAction title={t("canvas.nodeToolbar.downloadSelected")} label={t("canvas.nodeToolbar.downloadSelected")} icon={<Download className="size-4" />} onClick={onDownload} /> : null}
                 </div>
             ) : null}
         </>
