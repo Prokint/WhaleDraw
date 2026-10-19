@@ -7,7 +7,39 @@ window.__ModuleLoader__.load({
         const appPath = "/plugins/dsh-infinite-canvas/app";
         const canvasRoutes = new Map();
         const sidebarFrames = new Map();
+        let controls = [];
         const hostId = crypto.randomUUID();
+        const frameReports = new Map();
+        const hostReports = new Map();
+        let reportOrder = 0;
+        // DSH 运行中的会话会用状态点替换 leading 插槽，因此直接标记会话行。
+        const paintControls = () => {
+            const bySession = new Map(controls.map(({ sessionId, title }) => [sessionId, title || "未命名画布"]));
+            for (const row of document.querySelectorAll('[data-row-key^="session:"]')) {
+                const title = bySession.get(row.getAttribute("data-row-key").slice(8));
+                if (title && row.dataset.whaledrawCanvas !== title) row.dataset.whaledrawCanvas = title;
+                else if (!title && row.dataset.whaledrawCanvas) delete row.dataset.whaledrawCanvas;
+            }
+        };
+        const channel = new BroadcastChannel("whaledraw-canvas-controls");
+        const latestReport = (reports) => [...reports.values()].sort((a, b) => b.order - a.order)[0];
+        const refreshControls = () => {
+            controls = latestReport(new Map([...frameReports, ...hostReports]))?.controls || [];
+            paintControls();
+        };
+        const broadcastControls = () => {
+            const current = latestReport(frameReports);
+            channel.postMessage({ hostId, controls: current?.controls || null });
+            refreshControls();
+        };
+        channel.onmessage = ({ data }) => {
+            if (!data || data.hostId === hostId) return;
+            if (data.request) { broadcastControls(); return; }
+            if (Array.isArray(data.controls)) hostReports.set(data.hostId, { controls: data.controls, order: ++reportOrder });
+            else hostReports.delete(data.hostId);
+            refreshControls();
+        };
+        channel.postMessage({ hostId, request: true });
         let hostEvents;
         let wantedSessions = new Set();
         let hostUpdate = Promise.resolve();
@@ -110,8 +142,18 @@ window.__ModuleLoader__.load({
                 };
             }, [side, sessionId]);
             useEffect(() => {
+                const element = frame.current;
+                return () => { frameReports.delete(element); broadcastControls(); };
+            }, []);
+            useEffect(() => {
                 const onMessage = (event) => {
                     if (event.origin !== window.location.origin || event.source !== frame.current?.contentWindow) return;
+                    if (event.data?.type === "dsh-infinite-canvas:controls") {
+                        if (Array.isArray(event.data.controls)) frameReports.set(frame.current, { controls: event.data.controls, order: ++reportOrder });
+                        else frameReports.delete(frame.current);
+                        broadcastControls();
+                        return;
+                    }
                     if (event.data?.type === "dsh-infinite-canvas:focused") { focusedFrame = frame.current; return; }
                     if (event.data?.type === "dsh-infinite-canvas:bridge-mounted") {
                         prepare();
@@ -213,6 +255,22 @@ window.__ModuleLoader__.load({
             inject: ["slots", "layout", "sidebarRight", "sidebarRightTabs", "sessions", "conversation"],
             apply(ctx) {
                 hostContext = ctx;
+                ctx.effect(() => {
+                    const style = document.createElement("style");
+                    style.textContent = `[data-row-key^="session:"][data-whaledraw-canvas]::before{content:"🖌";order:-2;display:inline-block;margin-right:3px;font-size:14px;animation:whaledraw-writing 1.1s ease-in-out infinite;transform-origin:70% 75%}[data-row-key^="session:"][data-whaledraw-canvas]::after{content:attr(data-whaledraw-canvas);order:-1;max-width:40%;margin-right:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-state-business-primary);font-size:12px}@keyframes whaledraw-writing{0%,100%{transform:rotate(-18deg)}50%{transform:rotate(18deg)}}@media(prefers-reduced-motion:reduce){[data-row-key^="session:"][data-whaledraw-canvas]::before{animation:none}}`;
+                    document.head.appendChild(style);
+                    let pendingPaint = false;
+                    const observer = new MutationObserver(() => {
+                        if (!controls.length || pendingPaint) return;
+                        pendingPaint = true;
+                        requestAnimationFrame(() => { pendingPaint = false; paintControls(); });
+                    });
+                    observer.observe(document.body, { childList: true, subtree: true });
+                    const leave = () => channel.postMessage({ hostId, controls: null });
+                    window.addEventListener("pagehide", leave);
+                    paintControls();
+                    return () => { observer.disconnect(); style.remove(); window.removeEventListener("pagehide", leave); leave(); channel.close(); controls = []; paintControls(); };
+                });
                 ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: panelId }, CanvasPage));
                 ctx.effect(() => ctx.sidebarRightTabs.register({
                     id: panelId, kind: panelId, title: () => "WhaleDraw", keepMounted: true,

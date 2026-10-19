@@ -65,6 +65,7 @@ export function flushCanvasStorage() {
             if (!storageReady) throw new Error("画布库尚未成功读取，已停止写入以保护原数据");
             const current = await localForageStorage.getItem(CANVAS_STORE_KEY);
             const disk = current ? (JSON.parse(current) as StorageValue<CanvasStore>).state : { projects: [], deletedProjects: [] };
+            assertNoProjectConflict(savedLocalState.projects, value.state.projects, disk.projects);
             const raw = JSON.stringify({ ...value, state: {
                 projects: mergePendingChanges(savedLocalState.projects, value.state.projects, disk.projects),
                 deletedProjects: mergePendingChanges(savedLocalState.deletedProjects, value.state.deletedProjects, disk.deletedProjects),
@@ -75,7 +76,10 @@ export function flushCanvasStorage() {
             useCanvasStore.setState({ storageError: null });
         };
         // 只将磁盘读改写放进跨窗口锁，画布操作仍可并行执行。
-        lastWrite = persistWrite.then(() => globalThis.navigator?.locks ? navigator.locks.request(CANVAS_STORE_KEY, save) : save()).catch((error: unknown) => {
+        lastWrite = persistWrite.then(async () => {
+            if (globalThis.navigator?.locks) await navigator.locks.request(CANVAS_STORE_KEY, save);
+            else await save();
+        }).catch((error: unknown) => {
             // 后续已排队的新快照包含本次改动，不能再把失败的旧快照放回去覆盖它。
             if (sequence === saveSequence && !pendingPersistValue) pendingPersistValue = value;
             useCanvasStore.setState({ storageError: error instanceof Error ? error.message : String(error) });
@@ -99,11 +103,27 @@ function mergePendingChanges<T extends { id: string }>(previous: T[], pending: T
     return [...changed, ...disk.filter((item) => !changedIds.has(item.id) && (!before.has(item.id) || localIds.has(item.id)))];
 }
 
+function assertNoProjectConflict(previous: CanvasProject[], pending: CanvasProject[], disk: CanvasProject[]) {
+    const before = new Map(previous.map((item) => [item.id, JSON.stringify(item)]));
+    const after = new Map(pending.map((item) => [item.id, JSON.stringify(item)]));
+    const current = new Map(disk.map((item) => [item.id, JSON.stringify(item)]));
+    for (const [id, original] of before) {
+        if (after.get(id) !== original && current.get(id) !== original && after.get(id) !== current.get(id)) {
+            throw new Error("同一画布已在另一页面更新，请先导出当前画布备份");
+        }
+    }
+}
+
 /** 重读磁盘时只保留本页尚未保存的变更，避免重载丢掉新项目或回写旧副本。 */
 export async function reloadCanvasStorage() {
     await persistWrite;
     const pending = pendingPersistValue;
     const previous = savedLocalState;
+    if (pending) {
+        const current = await localForageStorage.getItem(CANVAS_STORE_KEY);
+        const disk = current ? (JSON.parse(current) as StorageValue<CanvasStore>).state.projects : [];
+        assertNoProjectConflict(previous.projects, pending.state.projects, disk);
+    }
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
     pendingPersistValue = null;

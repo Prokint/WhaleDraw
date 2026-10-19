@@ -41,6 +41,25 @@ test("两个窗口交错保存各自画布时保留另一窗口的新建、编�
     assert.equal(b.useCanvasStore.getState().openProject(idA), null);
 });
 
+test("同一画布被另一页面修改后拒绝旧副本覆盖", async (t) => {
+    const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true, include: [] } });
+    const previousStorage = globalThis.localStorage;
+    globalThis.localStorage = { getItem: () => null, setItem() {} };
+    t.after(async () => { globalThis.localStorage = previousStorage; await server.close(); });
+    const raw = (title) => JSON.stringify({ state: { projects: [{ id: "shared", title, nodes: [], connections: [], chatSessions: [] }], deletedProjects: [] }, version: 0 });
+    let disk = raw("原画布");
+    const { localForageStorage } = await server.ssrLoadModule("/src/lib/localforage-storage.ts");
+    localForageStorage.getItem = async () => disk;
+    localForageStorage.setItem = async (_key, value) => { disk = value; };
+    const page = await server.ssrLoadModule("/src/stores/canvas/use-canvas-store.ts");
+    await page.useCanvasStore.persist.rehydrate();
+    page.useCanvasStore.getState().updateProject("shared", { viewport: { x: 10, y: 0, k: 1 } });
+    disk = raw("其他页面的修改");
+    await assert.rejects(page.flushCanvasStorage(), /另一页面更新/);
+    await assert.rejects(page.reloadCanvasStorage(), /另一页面更新/);
+    assert.equal(JSON.parse(disk).state.projects[0].title, "其他页面的修改");
+});
+
 test("写入失败保留待保存内容，重试时仍合并其他窗口的新画布", async (t) => {
     const server = await createServer({ root: fileURLToPath(new URL("../../../", import.meta.url)), server: { middlewareMode: true, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true, include: [] } });
     const previousStorage = globalThis.localStorage;

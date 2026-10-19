@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 
-export type CanvasAgentControl = { projectId: string; title: string; clientId: string };
+export type CanvasAgentControl = { projectId: string; title: string; clientId: string; sessionId: string };
 
 type CanvasObserverStore = {
     clientId: string;
