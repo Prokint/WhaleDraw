@@ -45,7 +45,6 @@ import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { canvasStorageChanged, flushCanvasStorage, reloadCanvasStorage, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { IS_DSH_PLUGIN, openDshChat } from "@/constant/env";
-import { acquireCanvasAccess } from "@/lib/canvas/canvas-exclusive-access";
 import { useCanvasObserverStore } from "@/stores/canvas/use-canvas-observer-store";
 import { CanvasObserver } from "@/pages/canvas/canvas-observer";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
@@ -136,6 +135,9 @@ const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
 
+const controlledByAnotherAgent = (state: ReturnType<typeof useCanvasObserverStore.getState>, projectId: string) =>
+    IS_DSH_PLUGIN && state.controls.some((item) => item.projectId === projectId && item.clientId !== state.clientId);
+
 function applyGeneratedVideo(item: CanvasNodeData, video: UploadedFile, extra: CanvasNodeData["metadata"] = {}): CanvasNodeData {
     const videoSize = fitNodeSize(video.width || item.width, video.height || item.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
     return {
@@ -153,11 +155,19 @@ export default function CanvasPage() {
     const [mounted, setMounted] = useState(false);
     const [access, setAccess] = useState<{ projectId: string; error?: string; viewOnly?: boolean } | null>(null);
     const [attempt, setAttempt] = useState(0);
-    const agentControlled = useCanvasObserverStore((state) => state.controls.some((item) => item.projectId === projectId && item.clientId !== state.clientId));
+    const agentControlled = useCanvasObserverStore((state) => controlledByAnotherAgent(state, projectId));
 
     useEffect(() => {
-        if (agentControlled && access?.projectId === projectId && access.error && !access.viewOnly) setAccess({ ...access, viewOnly: true });
+        if (agentControlled && access?.projectId === projectId && !access.viewOnly) setAccess({ ...access, viewOnly: true });
     }, [access, agentControlled, projectId]);
+
+    useEffect(() => {
+        if (!IS_DSH_PLUGIN) return;
+        useAgentStore.getState().setAgentState({ canvasAccessError: agentControlled ? { projectId, message: "画布正在被 Agent 调用，当前仅可查看", code: "canvas-occupied" } : null });
+        return () => {
+            if (useAgentStore.getState().canvasAccessError?.projectId === projectId) useAgentStore.getState().setAgentState({ canvasAccessError: null });
+        };
+    }, [agentControlled, projectId]);
 
     useEffect(() => {
         setMounted(true);
@@ -171,36 +181,25 @@ export default function CanvasPage() {
             return;
         }
         let disposed = false;
-        let release: (() => void) | undefined;
-        useAgentStore.getState().setAgentState({ canvasAccessError: null });
         setAccess(null);
-        const observer = useCanvasObserverStore.getState();
-        if (observer.controls.some((item) => item.projectId === projectId && item.clientId !== observer.clientId)) {
-            useAgentStore.getState().setAgentState({ canvasAccessError: { projectId, message: "画布正在被 Agent 调用，当前仅可查看", code: "canvas-occupied" } });
+        if (controlledByAnotherAgent(useCanvasObserverStore.getState(), projectId)) {
             setAccess({ projectId, viewOnly: true });
-            return () => useAgentStore.getState().setAgentState({ canvasAccessError: null });
+            return;
         }
-        void acquireCanvasAccess(projectId).then(async (unlock) => {
-            release = unlock;
-            if (disposed) { unlock(); return; }
+        void (async () => {
             if (await canvasStorageChanged()) await reloadCanvasStorage();
             if (disposed) return;
             setAccess({ projectId });
-        }).catch((error: Error & { code?: string }) => {
-            release?.();
+        })().catch((error: Error) => {
             if (disposed) return;
-            useAgentStore.getState().setAgentState({ canvasAccessError: { projectId, message: error.message, code: error.code } });
             setAccess({ projectId, error: error.message });
         });
         return () => {
             disposed = true;
-            // 等正文清理与最后一次保存完成，再允许另一个页面接手。
-            if (release) void Promise.resolve().then(flushCanvasStorage).finally(release).catch(() => {});
-            useAgentStore.getState().setAgentState({ canvasAccessError: null });
         };
     }, [projectId, attempt]);
 
-    if (IS_DSH_PLUGIN && access?.projectId === projectId && (access.viewOnly || (access.error && agentControlled))) return <CanvasObserver projectId={projectId} onEdit={() => setAttempt((value) => value + 1)} />;
+    if (IS_DSH_PLUGIN && (agentControlled || (access?.projectId === projectId && access.viewOnly))) return <CanvasObserver projectId={projectId} onEdit={() => setAttempt((value) => value + 1)} />;
     if (access?.projectId === projectId && access.error) return (
         <main className="flex h-full flex-col items-center justify-center gap-4 bg-background p-6 text-center text-foreground" role="alert">
             <p>{access.error}</p>
@@ -578,7 +577,7 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!projectReady || historyPausedRef.current) return;
-        updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
+        if (!controlledByAnotherAgent(useCanvasObserverStore.getState(), projectId)) updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
     }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectReady, showImageInfo, updateProject]);
 
     useEffect(() => {
@@ -590,7 +589,7 @@ function InfiniteCanvasPage() {
         if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
         viewportSaveTimerRef.current = setTimeout(() => {
             viewportSaveTimerRef.current = null;
-            updateProject(projectId, { viewport: viewportRef.current });
+            if (!controlledByAnotherAgent(useCanvasObserverStore.getState(), projectId)) updateProject(projectId, { viewport: viewportRef.current });
         }, 500);
     }, [projectId, projectReady, updateProject, viewport]);
 
@@ -601,8 +600,10 @@ function InfiniteCanvasPage() {
             if (!viewportSaveTimerRef.current) return;
             clearTimeout(viewportSaveTimerRef.current);
             viewportSaveTimerRef.current = null;
-            updateProject(projectId, { viewport: viewportRef.current });
-            void flushCanvasStorage().catch(() => {});
+            if (!controlledByAnotherAgent(useCanvasObserverStore.getState(), projectId)) {
+                updateProject(projectId, { viewport: viewportRef.current });
+                void flushCanvasStorage().catch(() => {});
+            }
         },
         [projectId, updateProject],
     );

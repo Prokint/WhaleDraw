@@ -4,13 +4,14 @@ import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import { appPath, installCanvasLauncher } from "../src/canvas-launcher.mjs";
 
-function setup(t) {
+function setup(t, choice = "新开画布", sidebar = { mode: "none" }) {
     const routes = new Map();
     const handlers = new Map();
     const disposers = [];
     const activations = [];
     const bindings = new Map();
     const nativeTools = new Map();
+    const questions = [];
     let tool;
     let prompt;
     const previousFetch = globalThis.fetch;
@@ -25,7 +26,7 @@ function setup(t) {
         connection: { admit(req) { return req.headers.authorization ? {} : 401; } },
         webServer: { register(route) { routes.set(route.path, route.handler); return () => routes.delete(route.path); } },
         tools: { register(value) { if (value.name === "infinite_canvas_open") tool = value; else nativeTools.set(value.name, value); return () => {}; } },
-        userQuestions: { async ask() { return { answers: [{ id: "canvas-connection", selected: ["新开画布"] }] }; } },
+        userQuestions: { async ask(input) { questions.push(input); return { answers: [{ id: "canvas-connection", selected: [choice] }] }; } },
         systemPrompt: { getSectionOrder() { return 1; }, section(value) { prompt = value; return () => {}; } },
     };
     installCanvasLauncher(ctx, async () => ({ url: "http://127.0.0.1:17371", token: "test-token" }), { get: (id) => bindings.get(id), put: async (id, value) => { bindings.set(id, value); } }, ["canvas_get_state", "canvas_apply_ops"].map((name) => ({ name, parameters: { type: "object" } })));
@@ -38,13 +39,13 @@ function setup(t) {
             this.chunks.push(chunk);
             if (chunk.startsWith("event: inspect-canvas")) {
                 const { requestId, sessionId } = JSON.parse(chunk.split("data: ")[1]);
-                routes.get(`${appPath}/host-result`)(request(`${appPath}/host-result?${new URLSearchParams({ requestId, sessionId, hostId: this.hostId, mode: "none" })}`), response());
+                routes.get(`${appPath}/host-result`)(request(`${appPath}/host-result?${new URLSearchParams({ requestId, sessionId, hostId: this.hostId, ...sidebar })}`), response());
             }
         },
         end() { this.emit("close"); },
     });
     return {
-        tool, handlers, activations, prompt, nativeTools,
+        tool, handlers, activations, prompt, nativeTools, questions, bindings,
         attach(sessionId, authorization, hostId = crypto.randomUUID()) {
             const stream = response();
             stream.sessionId = Array.isArray(sessionId) ? sessionId[0] : sessionId;
@@ -104,6 +105,34 @@ test("opens only the caller's interface and waits for its restored canvas", asyn
     assert.equal(fixture.acknowledge(caller, "chat-a"), 204);
     assert.deepEqual(await result, { opened: true, connected: true, mode: "canvas", projectId: "canvas-project" });
     assert.equal(fixture.activations[0].body.clientId, "iframe-client");
+});
+
+test("本轮结束释放画布控制，下轮调用重新连接", async (t) => {
+    const fixture = setup(t);
+    const stream = fixture.attach("chat-a");
+    const first = fixture.tool.execute({}, execution());
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a");
+    await first;
+    fixture.handlers.get("session/event")({ id: "chat-a" }, { type: "turn/end" });
+    await setImmediate();
+    assert.equal(fixture.activations.filter((item) => item.url.pathname.endsWith("/disconnect")).length, 1);
+    const second = fixture.tool.execute({}, execution());
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a");
+    await second;
+    assert.equal(fixture.activations.filter((item) => item.url.pathname.endsWith("/connect")).length, 2);
+});
+
+test("本轮等待画布页面时结束，不再建立控制连接", async (t) => {
+    const fixture = setup(t);
+    const stream = fixture.attach("chat-a");
+    const opening = fixture.tool.execute({}, execution());
+    await setImmediate();
+    fixture.handlers.get("session/event")({ id: "chat-a" }, { type: "turn/end" });
+    fixture.acknowledge(stream, "chat-a");
+    await assert.rejects(opening, /本轮画布调用已结束/);
+    assert.equal(fixture.activations.filter((item) => item.url.pathname.endsWith("/connect")).length, 0);
 });
 
 test("同会话在第二个窗口恢复后台副本后，续用仍交给已连接的原窗口", async (t) => {
@@ -189,20 +218,103 @@ test("不同会话交错执行原生工具时固定专用连接，不修改冻�
     await assert.rejects(fixture.nativeTools.get(execA.name).execute(execA.arguments, execA), /请先连接/);
 });
 
-test("human canvas and image requests open before the model step", async (t) => {
+test("预步骤不因画布关键词弹窗或占用，Agent 调用工具后才连接", async (t) => {
     const fixture = setup(t);
     const stream = fixture.attach("chat-a");
-    for (const text of ["打开画布", "帮我生成一张橘猫图片"]) {
+    const exec = { ...execution(), step: 1 };
+    for (const text of ["解释这段画布代码", "帮我生成一张橘猫图片"]) {
         const decision = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text }] }] };
-        const result = fixture.handlers.get("agent/pre-step")({ ...execution() }, async () => decision);
-        await setImmediate();
-        fixture.acknowledge(stream, "chat-a");
-        assert.equal(await result, decision);
+        assert.equal(await fixture.handlers.get("agent/pre-step")(exec, async () => decision), decision);
     }
-    const ordinary = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text: "解释这段代码" }] }] };
+    assert.equal(fixture.questions.length, 0);
+    assert.equal(fixture.activations.length, 0);
+    assert.equal(stream.chunks.length, 1);
+    const opened = fixture.tool.execute({}, exec);
+    await setImmediate();
+    assert.equal(fixture.questions.length, 1);
+    fixture.acknowledge(stream, "chat-a");
+    assert.equal((await opened).connected, true);
+    assert.equal(fixture.activations.filter((item) => item.url.pathname.endsWith("/connect")).length, 1);
+});
+
+test("不使用鲸绘只跳过本轮，不打开侧边栏或保存默认绑定", async (t) => {
+    const fixture = setup(t, "不使用鲸绘");
+    const stream = fixture.attach("chat-a");
+    const exec = { ...execution(), step: 1 };
+    const decision = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text: "帮我生成一张图" }] }] };
+    await fixture.handlers.get("agent/pre-step")(exec, async () => decision);
+    assert.equal(fixture.questions.length, 0);
+    assert.equal(stream.chunks.length, 1);
+    await fixture.tool.execute({}, exec);
+    assert.equal(fixture.questions.length, 1);
+    assert.equal(stream.chunks.some((chunk) => chunk.startsWith("event: open-canvas")), false);
+    assert.equal(fixture.activations.length, 0);
+    assert.equal(fixture.bindings.has("chat-a"), false);
+    assert.match(fixture.prompt.text({ agent: exec.agent }), /继续完成用户的其他任务/);
+    let called = false;
+    const blocked = await fixture.handlers.get("tools/execute")({ ...exec, name: "mcp__infinite-canvas__canvas_get_state" }, async () => { called = true; });
+    assert.equal(blocked.value.result.connected, false);
+    assert.match(blocked.content[0].text, /继续处理其他任务/);
+    assert.equal(called, false);
+    await fixture.handlers.get("agent/pre-step")({ ...exec, step: 2 }, async () => decision);
+    assert.equal(fixture.questions.length, 1);
+    fixture.handlers.get("session/event")({ id: "chat-a" }, { type: "turn/end" });
+    await fixture.handlers.get("agent/pre-step")(exec, async () => decision);
+    await fixture.tool.execute({}, exec);
+    assert.equal(fixture.questions.length, 2);
+});
+
+test("打开生图工作台仍保存工作台绑定", async (t) => {
+    const fixture = setup(t, "打开生图工作台");
+    const stream = fixture.attach("chat-a");
+    const result = fixture.tool.execute({}, execution());
+    await setImmediate();
+    assert.equal(fixture.questions[0].questions[0].options[2].label, "打开生图工作台");
+    fixture.acknowledge(stream, "chat-a");
+    assert.equal((await result).mode, "workbench");
+    assert.deepEqual(fixture.bindings.get("chat-a"), { mode: "workbench" });
+});
+
+test("侧边栏与默认画布不同时可选择本轮不使用鲸绘", async (t) => {
+    const fixture = setup(t, "不使用鲸绘（仅本次）", { mode: "canvas", projectId: "other-project", title: "其他画布" });
+    fixture.bindings.set("chat-a", { mode: "canvas", projectId: "canvas-project" });
+    const stream = fixture.attach("chat-a");
+    const exec = { ...execution(), step: 1 };
+    const decision = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text: "读取画布" }] }] };
+    await fixture.handlers.get("agent/pre-step")(exec, async () => decision);
+    await fixture.tool.execute({}, exec);
+    assert.equal(fixture.questions.length, 1);
+    assert.equal(stream.chunks.some((chunk) => chunk.startsWith("event: open-canvas")), false);
+    assert.deepEqual(fixture.bindings.get("chat-a"), { mode: "canvas", projectId: "canvas-project" });
+});
+
+test("不要修改画布不触发重新选择，历史画布请求不触发当前普通任务", async (t) => {
+    const fixture = setup(t);
+    fixture.bindings.set("chat-a", { mode: "canvas", projectId: "canvas-project" });
+    const stream = fixture.attach("chat-a");
+    const exec = { ...execution(), step: 1 };
+    const decision = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text: "连接右侧画布并读取状态，不要修改画布" }] }] };
+    await fixture.handlers.get("agent/pre-step")(exec, async () => decision);
+    assert.equal(fixture.questions.length, 0);
+    const result = fixture.tool.execute({}, exec);
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a");
+    await result;
+    assert.equal(fixture.questions.length, 0);
     const before = stream.chunks.length;
-    assert.equal(await fixture.handlers.get("agent/pre-step")(execution(), async () => ordinary), ordinary);
+    decision.messages.push({ source: { kind: "user" }, content: [{ type: "text", text: "解释这段代码" }] });
+    await fixture.handlers.get("agent/pre-step")({ ...exec, step: 1 }, async () => decision);
     assert.equal(stream.chunks.length, before);
+    fixture.handlers.get("session/event")({ id: "chat-a" }, { type: "turn/end" });
+    const change = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text: "重新选择画布连接" }] }] };
+    await fixture.handlers.get("agent/pre-step")(exec, async () => change);
+    const chosen = fixture.tool.execute({ reselect: true }, exec);
+    await setImmediate();
+    fixture.acknowledge(stream, "chat-a");
+    await chosen;
+    assert.equal(fixture.questions.length, 1);
+    await fixture.handlers.get("agent/pre-step")({ ...exec, step: 2 }, async () => change);
+    assert.equal(fixture.questions.length, 1);
 });
 
 test("task cancellation removes the pending open request", async (t) => {
@@ -245,10 +357,11 @@ test("画布占用不使模型前置步骤失败，工具返回正常提示且�
     const stream = fixture.attach("chat-a");
     const exec = execution();
     const decision = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text: "读取画布" }] }] };
-    const result = fixture.handlers.get("agent/pre-step")(exec, async () => decision);
+    assert.equal(await fixture.handlers.get("agent/pre-step")(exec, async () => decision), decision);
+    const result = fixture.tool.execute({}, exec);
     await setImmediate();
     fixture.acknowledge(stream, "chat-a", { error: "画布已被其他会话或页面占用，请先关闭原会话中的画布，再重试", errorCode: "canvas-occupied" });
-    assert.equal(await result, decision);
+    assert.equal((await result).connected, false);
     let called = false;
     const blocked = await fixture.handlers.get("tools/execute")({ ...exec, name: "mcp__infinite-canvas__canvas_apply_ops" }, async () => { called = true; });
     assert.equal(blocked.isError, false);
@@ -274,24 +387,24 @@ test("连接工具将占用结果作为正常状态返回", async (t) => {
     assert.equal(fixture.activations.length, 0);
 });
 
-test("无事件流时前置步骤继续，Agent 收到提示，MCP 不执行且新请求可以重试", async (t) => {
+test("无事件流时连接工具返回提示，MCP 不执行且新请求可以重试", async (t) => {
     const fixture = setup(t);
     const other = fixture.attach("chat-b");
     const exec = execution();
     const decision = { kind: "enter", messages: [{ source: { kind: "user" }, content: [{ type: "text", text: "读取画布" }] }] };
     assert.equal(await fixture.handlers.get("agent/pre-step")(exec, async () => decision), decision);
+    assert.equal((await fixture.tool.execute({}, exec)).opened, false);
     assert.match(fixture.prompt.text({ agent: exec.agent }), /打开当前聊天.*正常的连接状态提示/);
-    assert.equal(fixture.tool.execute({}, exec).opened, false);
     let called = false;
     const blocked = await fixture.handlers.get("tools/execute")({ ...exec, name: "mcp__infinite-canvas__canvas_get_state" }, async () => { called = true; });
     assert.equal(blocked.isError, false);
     assert.equal(called, false);
     assert.equal(other.chunks.length, 1);
     const stream = fixture.attach("chat-a");
-    const retry = fixture.handlers.get("agent/pre-step")(exec, async () => decision);
+    const retry = fixture.tool.execute({ reselect: true }, exec);
     await setImmediate();
     fixture.acknowledge(stream, "chat-a");
-    assert.equal(await retry, decision);
+    assert.equal((await retry).connected, true);
     assert.equal(fixture.activations.length, 1);
     assert.match(fixture.prompt.text({ agent: exec.agent }), /本次操作画布为 canvas-project/);
 });

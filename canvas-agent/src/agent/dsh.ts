@@ -33,7 +33,7 @@ const connect = z.object({ sessionId: z.string().min(1), clientId: z.string().mi
 const tool = identity.extend({ name: z.string().min(1), input: z.record(z.unknown()) });
 const watch = z.object({ clientId: z.string().min(1), projectId: z.string().min(1).optional() }).strict();
 type Binding = z.infer<typeof connect> & { connectionId: string };
-type CanvasStatus = { projectId: string; title: string; clientId: string };
+type CanvasStatus = { projectId: string; title: string; clientId: string; sessionId: string };
 
 export class DshChannelError extends Error {
     constructor(message: string, readonly code: string) { super(message); }
@@ -121,7 +121,7 @@ export class DshChannel {
         return [...this.sessions.values()].flatMap((binding) => {
             const snapshot = this.canvas.canvasStateForClient(binding.clientId);
             return binding.mode === "canvas" && snapshot && snapshot.projectId === binding.projectId
-                ? [{ projectId: binding.projectId!, title: snapshot.title || "", clientId: binding.clientId }] : [];
+                ? [{ projectId: binding.projectId!, title: snapshot.title || "", clientId: binding.clientId, sessionId: binding.sessionId }] : [];
         });
     }
 

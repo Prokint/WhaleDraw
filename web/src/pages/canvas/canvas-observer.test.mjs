@@ -17,7 +17,7 @@ test("只读查看页渲染插件节点及上游内容，不显示插件缺失",
     const { CanvasObserver } = await server.ssrLoadModule("/src/pages/canvas/canvas-observer.tsx");
     registerNodeDefinitions([{ type: "test:preview", title: "预览插件", icon: "", defaultSize: { width: 300, height: 200 }, Content: ({ ctx }) => React.createElement("div", null, ctx.node.metadata.content, ctx.getUpstream().map((node) => node.metadata.content).join("")) }], "test");
     const node = (id, type, content) => ({ id, type, position: { x: 0, y: 0 }, width: 300, height: 200, metadata: { content } });
-    Object.assign(useCanvasObserverStore.getInitialState(), { projectId: "watched", connected: true, controls: [{ projectId: "watched", clientId: "owner", title: "观战" }], snapshot: { projectId: "watched", title: "观战", nodes: [node("upstream", "text", "上游内容"), node("plugin", "test:preview", "插件预览已渲染")], connections: [{ id: "edge", fromNodeId: "upstream", toNodeId: "plugin" }], selectedNodeIds: [], viewport: { x: 0, y: 0, k: 1 } } });
+    Object.assign(useCanvasObserverStore.getInitialState(), { projectId: "watched", connected: true, controls: [{ projectId: "watched", clientId: "owner", sessionId: "owner-session", title: "观战" }], snapshot: { projectId: "watched", title: "观战", nodes: [node("upstream", "text", "上游内容"), node("plugin", "test:preview", "插件预览已渲染")], connections: [{ id: "edge", fromNodeId: "upstream", toNodeId: "plugin" }], selectedNodeIds: [], viewport: { x: 0, y: 0, k: 1 } } });
     const html = renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(CanvasObserver, { projectId: "watched", onEdit() {} })));
     assert.ok(html.includes("插件预览已渲染"), "插件节点应使用注册的渲染器");
     assert.ok(html.includes("插件预览已渲染上游内容"), "插件渲染器应能读取当前快照中的上游节点");

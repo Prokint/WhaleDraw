@@ -28,6 +28,10 @@ export function DshCanvasBridge() {
         setAgentState({ enabled: true, connected: false, connectError: "", activity: "连接中" });
         const clientId = randomId();
         let source: EventSource | undefined;
+        const publishControls = (controls: CanvasAgentControl[] | null) => {
+            useCanvasObserverStore.setState({ controls: controls || [] });
+            window.parent.postMessage({ type: "dsh-infinite-canvas:controls", controls }, window.location.origin);
+        };
         let disposed = false;
         let stateTimer: ReturnType<typeof setTimeout> | undefined;
         let config: BridgeConfig | undefined;
@@ -241,6 +245,7 @@ export function DshCanvasBridge() {
                 const hello = JSON.parse(event.data) as { protocolVersion?: number };
                 if (hello.protocolVersion !== 6) {
                     source?.close();
+                    publishControls(null);
                     setAgentState({ enabled: false, connected: false, connectError: "Canvas Agent 协议版本不匹配" });
                     reportPrepare({ error: "Canvas Agent 协议版本不匹配" });
                     return;
@@ -255,7 +260,9 @@ export function DshCanvasBridge() {
                 if (!disposed) void runTool(JSON.parse(event.data) as AgentPendingToolCall);
             });
             source.addEventListener("dsh_canvases", (event) => {
-                if (!disposed) useCanvasObserverStore.setState({ controls: (JSON.parse(event.data) as { canvases: CanvasAgentControl[] }).canvases });
+                if (disposed) return;
+                const controls = (JSON.parse(event.data) as { canvases: CanvasAgentControl[] }).canvases;
+                publishControls(controls);
             });
             source.addEventListener("dsh_canvas_state", (event) => {
                 const { projectId, snapshot } = JSON.parse(event.data) as { projectId: string; snapshot: CanvasAgentSnapshot | null };
@@ -263,7 +270,8 @@ export function DshCanvasBridge() {
             });
             source.onerror = () => {
                 if (!disposed) {
-                    useCanvasObserverStore.setState({ connected: false, controls: [] });
+                    useCanvasObserverStore.setState({ connected: false });
+                    publishControls(null);
                     setAgentState({ connected: false, activity: "连接中" });
                     reportPrepare({ error: "无法连接本地画布服务" });
                 }
@@ -272,7 +280,8 @@ export function DshCanvasBridge() {
             if (!disposed) {
                 const text = error instanceof Error ? error.message : String(error);
                 setAgentState({ enabled: false, connected: false, connectError: text });
-                useCanvasObserverStore.setState({ connected: false, controls: [], error: text });
+                useCanvasObserverStore.setState({ connected: false, error: text });
+                publishControls(null);
                 reportPrepare({ error: text });
             }
         });
@@ -287,8 +296,9 @@ export function DshCanvasBridge() {
             window.removeEventListener("focus", notifyFocus);
             if (stateTimer) clearTimeout(stateTimer);
             source?.close();
+            publishControls(null);
             setAgentState({ enabled: false, connected: false });
-            useCanvasObserverStore.setState({ connected: false, controls: [], clientId: "" });
+            useCanvasObserverStore.setState({ connected: false, clientId: "" });
         };
     }, [message, navigate, setAgentState]);
 

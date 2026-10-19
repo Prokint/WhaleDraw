@@ -149,7 +149,7 @@ test("DSH 画布观察只给订阅页面完整快照，不抢占两个会话，�
     const b = await bind("session-b", "owner-b", "canvas-b");
     page("workbench");
     await bind("session-workbench", "workbench");
-    const statuses = [{ projectId: "canvas-a", title: "canvas-a", clientId: "owner-a" }, { projectId: "canvas-b", title: "canvas-b", clientId: "owner-b" }];
+    const statuses = [{ projectId: "canvas-a", title: "canvas-a", clientId: "owner-a", sessionId: "session-a" }, { projectId: "canvas-b", title: "canvas-b", clientId: "owner-b", sessionId: "session-b" }];
     assert.deepEqual(events(observerA, "dsh_canvases").at(-1), { canvases: statuses });
     assert.deepEqual((await watch("observer-a", "canvas-a")).result, { canvases: statuses, snapshot: canvas.canvasStateForClient("owner-a") });
     assert.deepEqual(events(observerA, "dsh_canvas_state").at(-1), { projectId: "canvas-a", snapshot: canvas.canvasStateForClient("owner-a") });
