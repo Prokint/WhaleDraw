@@ -7,19 +7,32 @@ import { logger } from "./utils/logger.js";
 
 const require = createRequire(import.meta.url);
 const execFileAsync = promisify(execFile);
-const CODEX_VERSION = String((require("@openai/codex/package.json") as { version: string }).version);
+/**
+ * Codex is optional in this build: NovaFlow ships the DSH tool channel without it, so a
+ * missing package must not stop the Canvas Agent from starting.
+ */
+const CODEX_VERSION = (() => {
+    try {
+        return String((require("@openai/codex/package.json") as { version: string }).version);
+    } catch {
+        return "";
+    }
+})();
 export const AGENT_COMMAND = "npx -y --prefer-online https://github.com/Prokint/WhaleDraw/releases/latest/download/whaledraw-canvas-agent.tgz";
 
 /** 输出当前版本，并在后台检查 WhaleDraw Release 与 Codex npm 版本。 */
 export function checkVersions() {
-    const localCodexVersion = commandVersion("codex");
+    const localCodexVersion = CODEX_VERSION ? commandVersion("codex") : "";
     logger.info("Canvas Agent version", { version: VERSION });
-    logger.info("Bundled Codex version", { version: CODEX_VERSION });
-    logger.info("Local Codex version", { version: localCodexVersion || "not found" });
-    if (!localCodexVersion) {
-        logger.warn("Local Codex was not found. Install the latest version with: npm install -g @openai/codex@latest");
-    } else if (localCodexVersion !== CODEX_VERSION) {
-        logger.warn(`Bundled Codex ${CODEX_VERSION} does not match local Codex ${localCodexVersion}. Keep both current with: npm install -g @openai/codex@latest && ${AGENT_COMMAND}`);
+    if (!CODEX_VERSION) logger.info("Bundled Codex: not included in this build (DSH tool channel only)");
+    else {
+        logger.info("Bundled Codex version", { version: CODEX_VERSION });
+        logger.info("Local Codex version", { version: localCodexVersion || "not found" });
+        if (!localCodexVersion) {
+            logger.warn("Local Codex was not found. Install the latest version with: npm install -g @openai/codex@latest");
+        } else if (localCodexVersion !== CODEX_VERSION) {
+            logger.warn(`Bundled Codex ${CODEX_VERSION} does not match local Codex ${localCodexVersion}. Keep both current with: npm install -g @openai/codex@latest && ${AGENT_COMMAND}`);
+        }
     }
     void checkLatestVersions(localCodexVersion);
 }
@@ -27,11 +40,10 @@ export function checkVersions() {
 /** 分别查询本仓库 Release 与 Codex npm，提醒升级旧版本。 */
 async function checkLatestVersions(localCodexVersion: string) {
     try {
-        const [latestAgent, latestCodex] = await Promise.all([
-            latestAgentRelease(),
-            npmVersion("@openai/codex"),
-        ]);
+        const latestAgent = await latestAgentRelease();
         if (isOlder(VERSION, latestAgent.version)) logger.warn(`Update available: Canvas Agent ${VERSION} -> ${latestAgent.version}. Run: npx -y ${latestAgent.url}`);
+        if (!CODEX_VERSION) return;
+        const latestCodex = await npmVersion("@openai/codex");
         if (isOlder(CODEX_VERSION, latestCodex)) logger.warn(`Update available: bundled Codex ${CODEX_VERSION} -> ${latestCodex}. Upgrade Canvas Agent with: ${AGENT_COMMAND}`);
         if (localCodexVersion && isOlder(localCodexVersion, latestCodex)) logger.warn(`Update available: local Codex ${localCodexVersion} -> ${latestCodex}. Run: npm install -g @openai/codex@latest`);
     } catch {

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -11,6 +11,19 @@ import { installVerifiedBundle } from "./verified-install.mjs";
 const repository = "Prokint/WhaleDraw";
 const packageName = "dsh-infinite-canvas";
 const releasePackageName = "whaledraw";
+/**
+ * NovaFlow ships this build and owns its version, so the in-app updater reports the shipped
+ * state instead of replacing the bundled copy with an upstream release.
+ */
+const distributedByNovaFlow = (() => {
+    try {
+        return JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"))?.novaflow?.shipped === true;
+    } catch {
+        return false;
+    }
+})();
+/** Installer refusal text for a NovaFlow-shipped copy; the plugin list stays read-only for updates. */
+const lockedByNovaFlow = "此版本随 NovaFlow 提供，请通过 NovaFlow 的版本更新获取新功能。";
 const updateStages = ["checking", "downloading", "verifying", "backing-up", "preparing", "installing", "checking-files"];
 
 export function installPluginUpdater(ctx) {
@@ -25,6 +38,7 @@ export function installPluginUpdater(ctx) {
     const candidate = async (requestedVersion, signal = abort.signal) => {
         const version = valid(requestedVersion);
         if (!version) throw new Error("更新版本无效，请重新检查更新。");
+        if (distributedByNovaFlow) return { version, available: false, reason: lockedByNovaFlow };
         if (installedVersion === version) return { version, available: false, reason: "新版本已安装，重启 DSH 后生效。" };
         let currentVersion;
         try { currentVersion = valid(JSON.parse(await readFile(new URL("../dist/app/version.json", import.meta.url), "utf8")).version); }
@@ -86,6 +100,7 @@ export function installPluginUpdater(ctx) {
                 }).catch((error) => respond(res, 502, { error: error.message }));
                 return;
             }
+            if (distributedByNovaFlow) { respond(res, 409, { error: lockedByNovaFlow }); return; }
             if (installing) { respond(res, 409, { error: "已有更新正在安装，请等待完成。" }); return; }
             installing = true;
             activeUpdate = { version: valid(version), controller: new AbortController(), progress: { stage: "checking" } };

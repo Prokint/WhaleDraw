@@ -896,5 +896,12 @@ function parseMaybeJson(value: unknown) {
 
 /** 定位当前依赖中 Codex CLI 的执行文件。 */
 function codexBin() {
-    return path.join(path.dirname(require.resolve("@openai/codex/package.json")), "bin", "codex.js");
+    try {
+        return path.join(path.dirname(require.resolve("@openai/codex/package.json")), "bin", "codex.js");
+    } catch {
+        throw Object.assign(
+            new Error("此构建未包含 Codex 独立聊天后端；请在 DSH 会话中使用画布工具。"),
+            { code: "codex-unavailable" },
+        );
+    }
 }
